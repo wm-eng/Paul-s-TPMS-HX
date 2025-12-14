@@ -76,7 +76,8 @@ class RVEDatabase:
         else:
             # Default: assume 5mm unit cell (typical for TPMS lattices)
             self.cell_size = 5e-3  # m
-            warnings.warn(f"cell_size not specified in CSV or parameter. Using default: {self.cell_size*1000:.1f} mm")
+            # Suppress warning - default is acceptable
+            # warnings.warn(f"cell_size not specified in CSV or parameter. Using default: {self.cell_size*1000:.1f} mm")
         
         # Sort by d for interpolation
         df = df.sort_values('d')
@@ -109,11 +110,12 @@ class RVEDatabase:
                 self.metal = metal
                 self.use_metal_properties = True
                 self.k_metal_ref = k_metal
-                warnings.warn(
-                    f"Using metal properties for {metal_name}: "
-                    f"k = {k_metal:.1f} W/(m·K) at {T_ref}K. "
-                    f"CSV lambda_solid values will be scaled by metal conductivity."
-                )
+                # Suppress warning - this is expected behavior, not an error
+                # warnings.warn(
+                #     f"Using metal properties for {metal_name}: "
+                #     f"k = {k_metal:.1f} W/(m·K) at {T_ref}K. "
+                #     f"CSV lambda_solid values will be scaled by metal conductivity."
+                # )
             except ImportError:
                 warnings.warn("MetalProperties not available, using CSV values")
                 self.use_metal_properties = False
