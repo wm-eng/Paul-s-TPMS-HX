@@ -346,10 +346,11 @@ class MacroModel:
             # Pressure drop: Darcy-Forchheimer
             # dP/dx = -(mu/kappa) * u - beta * rho * u * |u|
             # This gives pressure drop per unit length (always negative for flow)
-            rho_hot = self.props_hot.density(T_hot[:-1], P_hot[:-1])
-            rho_cold = self.props_cold.density(T_cold[:-1], P_cold[:-1])
-            mu_hot = self.props_hot.viscosity(T_hot[:-1], P_hot[:-1])
-            mu_cold = self.props_cold.viscosity(T_cold[:-1], P_cold[:-1])
+            # Use safe temperature and pressure values (defined earlier in iteration)
+            rho_hot = self.props_hot.density(T_hot_safe, P_hot_safe)
+            rho_cold = self.props_cold.density(T_cold_safe, P_cold_safe)
+            mu_hot = self.props_hot.viscosity(T_hot_safe, P_hot_safe)
+            mu_cold = self.props_cold.viscosity(T_cold_safe, P_cold_safe)
             
             # Pressure gradient in +x direction (always negative for flow)
             dP_dx_hot = -(mu_hot / kappa_hot) * u_hot - beta_hot * rho_hot * u_hot * np.abs(u_hot)
@@ -523,10 +524,20 @@ class MacroModel:
             T_solid[-1] = T_solid[-2]
             
             # Pressure drop: Darcy-Forchheimer along paths
-            rho_hot = self.props_hot.density(T_hot[:-1], P_hot[:-1])
-            rho_cold = self.props_cold.density(T_cold[:-1], P_cold[:-1])
-            mu_hot = self.props_hot.viscosity(T_hot[:-1], P_hot[:-1])
-            mu_cold = self.props_cold.viscosity(T_cold[:-1], P_cold[:-1])
+            # Use safe temperature and pressure values for property lookups
+            T_hot_safe_2d = np.clip(T_hot[:-1], 1.0, 1e4)
+            T_cold_safe_2d = np.clip(T_cold[:-1], 1.0, 1e4)
+            P_hot_safe_2d = np.clip(P_hot[:-1], 1e3, 1e8)
+            P_cold_safe_2d = np.clip(P_cold[:-1], 1e3, 1e8)
+            T_hot_safe_2d = np.nan_to_num(T_hot_safe_2d, nan=300.0, posinf=300.0, neginf=300.0)
+            T_cold_safe_2d = np.nan_to_num(T_cold_safe_2d, nan=20.0, posinf=20.0, neginf=20.0)
+            P_hot_safe_2d = np.nan_to_num(P_hot_safe_2d, nan=self.config.fluid.P_hot_in, posinf=self.config.fluid.P_hot_in, neginf=self.config.fluid.P_hot_in)
+            P_cold_safe_2d = np.nan_to_num(P_cold_safe_2d, nan=self.config.fluid.P_cold_in, posinf=self.config.fluid.P_cold_in, neginf=self.config.fluid.P_cold_in)
+            
+            rho_hot = self.props_hot.density(T_hot_safe_2d, P_hot_safe_2d)
+            rho_cold = self.props_cold.density(T_cold_safe_2d, P_cold_safe_2d)
+            mu_hot = self.props_hot.viscosity(T_hot_safe_2d, P_hot_safe_2d)
+            mu_cold = self.props_cold.viscosity(T_cold_safe_2d, P_cold_safe_2d)
             
             dP_ds_hot = -(mu_hot / kappa_hot) * u_hot - beta_hot * rho_hot * u_hot * np.abs(u_hot)
             dP_ds_cold = -(mu_cold / kappa_cold) * u_cold - beta_cold * rho_cold * u_cold * np.abs(u_cold)
