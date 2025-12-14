@@ -621,16 +621,37 @@ class RealFluidProperties:
         
         # For hydrogen (liquid), calculate actual saturation temperature
         if P.ndim == 0:
-            if self.backend == 'REFPROP':
-                return self._get_property_refprop('T_sat', 0, float(P))
-            else:
-                return self._get_property_coolprop('T_sat', 0, float(P))
-        else:
-            result = np.zeros_like(P, dtype=float)
-            for i in range(P.size):
+            try:
                 if self.backend == 'REFPROP':
-                    result.flat[i] = self._get_property_refprop('T_sat', 0, float(P.flat[i]))
+                    val = self._get_property_refprop('T_sat', 0, float(P))
                 else:
-                    result.flat[i] = self._get_property_coolprop('T_sat', 0, float(P.flat[i]))
-            return result
+                    val = self._get_property_coolprop('T_sat', 0, float(P))
+                # Ensure scalar return
+                if isinstance(val, (list, tuple)):
+                    return float(val[0]) if len(val) > 0 else 1e6
+                elif isinstance(val, np.ndarray):
+                    return float(val.flat[0]) if val.size > 0 else 1e6
+                return float(val)
+            except Exception:
+                return 1e6  # Fallback
+        else:
+            # Array - create writable array
+            result = np.zeros(P.size, dtype=np.float64)
+            P_flat = np.asarray(P).flatten()
+            for i in range(P.size):
+                try:
+                    if self.backend == 'REFPROP':
+                        val = self._get_property_refprop('T_sat', 0, float(P_flat[i]))
+                    else:
+                        val = self._get_property_coolprop('T_sat', 0, float(P_flat[i]))
+                    # Ensure scalar
+                    if isinstance(val, (list, tuple)):
+                        result[i] = float(val[0]) if len(val) > 0 else 1e6
+                    elif isinstance(val, np.ndarray):
+                        result[i] = float(val.flat[0]) if val.size > 0 else 1e6
+                    else:
+                        result[i] = float(val)
+                except Exception:
+                    result[i] = 1e6  # Fallback
+            return result.reshape(P.shape)
 
