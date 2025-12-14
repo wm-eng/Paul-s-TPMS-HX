@@ -118,7 +118,7 @@ class SolverConfig:
     """Solver parameters."""
     max_iter: int = 100
     tol: float = 1e-6
-    relax: float = 0.5  # Relaxation factor for iterative solver
+    relax: float = 0.3  # Relaxation factor for iterative solver (reduced for stability)
 
 
 @dataclass

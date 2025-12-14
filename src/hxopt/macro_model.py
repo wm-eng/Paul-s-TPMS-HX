@@ -165,98 +165,220 @@ class MacroModel:
         beta_cold = beta_hot
         eps_cold = eps_hot
         
-        # Initialize temperature and pressure profiles
-        T_hot = np.full(self.n + 1, self.config.fluid.T_hot_in)
-        T_cold = np.full(self.n + 1, self.config.fluid.T_cold_in)
+        # Initialize temperature and pressure profiles with better initial guess
+        # Linear interpolation between inlets for better initial condition
+        T_hot = np.linspace(
+            self.config.fluid.T_hot_in,
+            self.config.fluid.T_hot_in - 10.0,  # Assume some cooling
+            self.n + 1
+        )
+        T_cold = np.linspace(
+            self.config.fluid.T_cold_in + 10.0,  # Assume some heating
+            self.config.fluid.T_cold_in,
+            self.n + 1
+        )
         T_solid = (T_hot + T_cold) / 2.0
         P_hot = np.full(self.n + 1, self.config.fluid.P_hot_in)
         P_cold = np.full(self.n + 1, self.config.fluid.P_cold_in)
         
-        # Initialize enthalpies (h = cp * T for constant properties)
-        h_hot = self.props_hot.specific_heat(T_hot[0], P_hot[0]) * T_hot
-        h_cold = self.props_cold.specific_heat(T_cold[0], P_cold[0]) * T_cold
+        # Initialize enthalpies using reference temperature
+        # Use inlet conditions for reference enthalpy
+        T_ref_hot = self.config.fluid.T_hot_in
+        T_ref_cold = self.config.fluid.T_cold_in
+        P_ref_hot = self.config.fluid.P_hot_in
+        P_ref_cold = self.config.fluid.P_cold_in
         
-        # Iterative solve for energy balance
+        cp_ref_hot = self.props_hot.specific_heat(T_ref_hot, P_ref_hot)
+        cp_ref_cold = self.props_cold.specific_heat(T_ref_cold, P_ref_cold)
+        
+        # Initialize enthalpies: h = cp_ref * T (for constant properties)
+        # For variable properties, we'll update this iteratively
+        h_hot = cp_ref_hot * T_hot
+        h_cold = cp_ref_cold * T_cold
+        
+        # Physical bounds for temperatures
+        # Hot side should cool down: T_hot_in >= T_hot >= T_cold_in
+        # Cold side should heat up: T_cold_in <= T_cold <= T_hot_in
+        T_min_global = min(self.config.fluid.T_cold_in, self.config.fluid.T_hot_in) - 10.0
+        T_max_global = max(self.config.fluid.T_cold_in, self.config.fluid.T_hot_in) + 10.0
+        T_hot_min = self.config.fluid.T_cold_in  # Hot can't cool below cold inlet
+        T_hot_max = self.config.fluid.T_hot_in  # Hot can't exceed its inlet
+        T_cold_min = self.config.fluid.T_cold_in  # Cold can't cool below its inlet
+        T_cold_max = self.config.fluid.T_hot_in  # Cold can't exceed hot inlet
+        
+        # Iterative solve for energy balance with improved stability
         for it in range(self.config.solver.max_iter):
             T_hot_old = T_hot.copy()
             T_cold_old = T_cold.copy()
             T_solid_old = T_solid.copy()
             
+            # Compute densities and properties at current temperatures
+            rho_hot = self.props_hot.density(T_hot[:-1], P_hot[:-1])
+            rho_cold = self.props_cold.density(T_cold[:-1], P_cold[:-1])
+            
+            # Clamp densities to prevent division by zero
+            rho_hot = np.clip(rho_hot, 1e-6, 1e6)
+            rho_cold = np.clip(rho_cold, 1e-6, 1e6)
+            
             # Compute velocities from mass flow rates
             # u = m_dot / (rho * A * eps)
-            u_hot = self.config.fluid.m_dot_hot / (
-                self.props_hot.density(T_hot[:-1], P_hot[:-1]) * 
-                self.A_hot * eps_hot
-            )
-            u_cold = self.config.fluid.m_dot_cold / (
-                self.props_cold.density(T_cold[:-1], P_cold[:-1]) * 
-                self.A_cold * eps_cold
-            )
+            # Clamp porosity to prevent division by zero
+            eps_hot_safe = np.clip(eps_hot, 1e-3, 1.0)
+            eps_cold_safe = np.clip(eps_cold, 1e-3, 1.0)
+            
+            u_hot = self.config.fluid.m_dot_hot / (rho_hot * self.A_hot * eps_hot_safe)
+            u_cold = self.config.fluid.m_dot_cold / (rho_cold * self.A_cold * eps_cold_safe)
+            
+            # Clamp velocities to reasonable range
+            u_hot = np.clip(u_hot, 1e-6, 100.0)  # m/s
+            u_cold = np.clip(u_cold, 1e-6, 100.0)  # m/s
             
             # Heat transfer coefficients
             h_htc_hot = self.rve_db.h_hot(u_hot, d_field)
             h_htc_cold = self.rve_db.h_cold(u_cold, d_field)
             
+            # Clamp heat transfer coefficients
+            h_htc_hot = np.clip(h_htc_hot, 1.0, 1e6)  # W/(m²·K)
+            h_htc_cold = np.clip(h_htc_cold, 1.0, 1e6)  # W/(m²·K)
+            
             # Volumetric heat transfer: Q_vol = h * A_surf/V * (T_solid - T_fluid)
-            # A_surf/V is the volumetric heat transfer coefficient parameter
-            # from RVE properties (function of d(x))
-            A_surf_V = self.rve_db.A_surf_V(d_field)  # 1/m, surface area per unit volume
+            A_surf_V = self.rve_db.A_surf_V(d_field)  # 1/m
+            A_surf_V = np.clip(A_surf_V, 1.0, 1e6)  # Clamp to reasonable range
+            
             Q_vol_hot = h_htc_hot * A_surf_V * (T_solid[:-1] - T_hot[:-1])
             Q_vol_cold = h_htc_cold * A_surf_V * (T_solid[:-1] - T_cold[:-1])
+            
+            # Clamp volumetric heat transfer to prevent instability
+            Q_max = 1e6  # W/m³, maximum reasonable heat transfer rate
+            Q_vol_hot = np.clip(Q_vol_hot, -Q_max, Q_max)
+            Q_vol_cold = np.clip(Q_vol_cold, -Q_max, Q_max)
             
             # Energy balance: d(m_dot * h)/dx = Q_vol * A_cross
             # For constant m_dot: m_dot * dh/dx = Q_vol * A_cross
             cp_hot = self.props_hot.specific_heat(T_hot[:-1], P_hot[:-1])
             cp_cold = self.props_cold.specific_heat(T_cold[:-1], P_cold[:-1])
             
-            # Update enthalpies (upwind differencing)
-            # Hot side flows +x, cold side flows -x (counterflow)
+            # Clamp specific heats
+            cp_hot = np.clip(cp_hot, 100.0, 1e6)  # J/(kg·K)
+            cp_cold = np.clip(cp_cold, 100.0, 1e6)  # J/(kg·K)
+            
+            # Update enthalpies with under-relaxation
+            relax_h = self.config.solver.relax * 0.5  # More conservative for enthalpy
+            
+            # Hot side: forward difference (flows +x)
             for i in range(1, self.n + 1):
                 # Hot side: forward difference
                 dh_dx_hot = Q_vol_hot[i-1] * self.A_hot / self.config.fluid.m_dot_hot
-                h_hot[i] = h_hot[i-1] + dh_dx_hot * self.dx
-                T_hot[i] = h_hot[i] / cp_hot[i-1] if i < self.n else h_hot[i] / cp_hot[-1]
+                h_hot_new = h_hot[i-1] + dh_dx_hot * self.dx
+                
+                # Under-relaxation
+                h_hot[i] = (1 - relax_h) * h_hot[i] + relax_h * h_hot_new
+                
+                # Convert enthalpy to temperature using current cp
+                cp_use = cp_hot[i-1] if i <= self.n else cp_hot[-1]
+                T_hot_new = h_hot[i] / cp_use
+                
+                # Clamp temperature to physical bounds
+                # Hot side should cool down as it flows
+                T_hot_new = np.clip(T_hot_new, T_hot_min, T_hot_max)
+                
+                # Under-relaxation for temperature
+                T_hot[i] = (1 - self.config.solver.relax) * T_hot[i] + \
+                           self.config.solver.relax * T_hot_new
+                
+                # Update enthalpy to be consistent with clamped temperature
+                h_hot[i] = cp_use * T_hot[i]
             
-            # Cold side: backward difference (flows opposite, inlet at x=L)
-            # Set inlet condition at index -1
-            h_cold[-1] = self.props_cold.specific_heat(
-                self.config.fluid.T_cold_in, P_cold[-1]
-            ) * self.config.fluid.T_cold_in
+            # Cold side: backward difference (flows -x, inlet at x=L)
+            # Reset inlet condition each iteration
+            h_cold[-1] = cp_ref_cold * self.config.fluid.T_cold_in
             T_cold[-1] = self.config.fluid.T_cold_in
             
+            # Cold side flows in -x direction (from x=L to x=0)
+            # Energy balance: m_dot * dh/dx = Q_vol * A_cross
+            # For flow in -x: dh/dx = -Q_vol * A_cross / m_dot (negative because dx is negative)
+            # So: h[j] = h[j+1] + (Q_vol * A_cross / m_dot) * dx
+            # But since we're going backwards, dx is negative, so we add
             for j in range(self.n - 1, -1, -1):
+                # Cold side receives heat, so enthalpy increases as we go from inlet to outlet
+                # Q_vol_cold is positive when T_solid > T_cold (cold side heats up)
                 dh_dx_cold = Q_vol_cold[j] * self.A_cold / self.config.fluid.m_dot_cold
-                h_cold[j] = h_cold[j+1] - dh_dx_cold * self.dx
-                T_cold[j] = h_cold[j] / cp_cold[j]
+                # Since cold flows -x, and we're integrating backwards, we add
+                h_cold_new = h_cold[j+1] + dh_dx_cold * self.dx
+                
+                # Under-relaxation
+                h_cold[j] = (1 - relax_h) * h_cold[j] + relax_h * h_cold_new
+                
+                # Convert enthalpy to temperature
+                T_cold_new = h_cold[j] / cp_cold[j]
+                
+                # Clamp temperature - cold side should heat up, so T_cold[j] >= T_cold_in
+                T_cold_min = self.config.fluid.T_cold_in
+                T_cold_max = self.config.fluid.T_hot_in
+                T_cold_new = np.clip(T_cold_new, T_cold_min, T_cold_max)
+                
+                # Under-relaxation for temperature
+                T_cold[j] = (1 - self.config.solver.relax) * T_cold[j] + \
+                           self.config.solver.relax * T_cold_new
+                
+                # Update enthalpy to be consistent
+                h_cold[j] = cp_cold[j] * T_cold[j]
             
-            # Solid energy balance: conduction + heat transfer
-            # Simplified: T_solid balances heat from both sides
-            # k_solid * d²T/dx² + Q_vol_hot + Q_vol_cold = 0
-            # For v1, use simple averaging with relaxation
-            T_solid_new = (h_htc_hot * T_hot[:-1] + h_htc_cold * T_cold[:-1]) / (
-                h_htc_hot + h_htc_cold + 1e-10
-            )
+            # Solid energy balance with improved stability
+            # Heat balance: h_htc_hot * (T_solid - T_hot) = h_htc_cold * (T_cold - T_solid)
+            # Solving: T_solid = (h_htc_hot * T_hot + h_htc_cold * T_cold) / (h_htc_hot + h_htc_cold)
+            denominator = h_htc_hot + h_htc_cold + 1e-10
+            T_solid_new = (h_htc_hot * T_hot[:-1] + h_htc_cold * T_cold[:-1]) / denominator
+            
+            # Clamp solid temperature (should be between hot and cold)
+            T_solid_min = min(self.config.fluid.T_cold_in, self.config.fluid.T_hot_in)
+            T_solid_max = max(self.config.fluid.T_cold_in, self.config.fluid.T_hot_in)
+            T_solid_new = np.clip(T_solid_new, T_solid_min, T_solid_max)
+            
+            # Under-relaxation for solid temperature
             T_solid[:-1] = (1 - self.config.solver.relax) * T_solid[:-1] + \
                           self.config.solver.relax * T_solid_new
             T_solid[-1] = T_solid[-2]  # Extrapolate
             
             # Pressure drop: Darcy-Forchheimer
             # dP/dx = -(mu/kappa) * u - beta * rho * u * |u|
+            # This gives pressure drop per unit length (always negative for flow)
             rho_hot = self.props_hot.density(T_hot[:-1], P_hot[:-1])
             rho_cold = self.props_cold.density(T_cold[:-1], P_cold[:-1])
             mu_hot = self.props_hot.viscosity(T_hot[:-1], P_hot[:-1])
             mu_cold = self.props_cold.viscosity(T_cold[:-1], P_cold[:-1])
             
+            # Pressure gradient in +x direction (always negative for flow)
             dP_dx_hot = -(mu_hot / kappa_hot) * u_hot - beta_hot * rho_hot * u_hot * np.abs(u_hot)
             dP_dx_cold = -(mu_cold / kappa_cold) * u_cold - beta_cold * rho_cold * u_cold * np.abs(u_cold)
             
+            # Clamp pressure gradients to prevent instability
+            dP_dx_hot = np.clip(dP_dx_hot, -1e6, 0.0)  # Negative (pressure drop)
+            dP_dx_cold = np.clip(dP_dx_cold, -1e6, 0.0)  # Negative (pressure drop)
+            
             # Integrate pressure
+            # Hot side: flows +x, pressure decreases (dP/dx < 0)
             for i in range(1, self.n + 1):
                 P_hot[i] = P_hot[i-1] + dP_dx_hot[i-1] * self.dx
+                # Ensure pressure doesn't go negative
+                P_hot[i] = max(P_hot[i], 1e3)  # Minimum 1 kPa
             
-            # Cold side: integrate from outlet (x=0) to inlet (x=L)
+            # Cold side: flows -x (from x=L to x=0)
+            # Pressure decreases in the flow direction
+            # Since cold flows -x, pressure at x=0 (outlet) < pressure at x=L (inlet)
+            # dP_dx_cold is pressure gradient in +x direction (negative for flow)
+            # When integrating backwards (from L to 0), we integrate in -x direction
+            # For flow in -x direction: dP/d(-x) = -dP/dx
+            # Since dP/dx is negative, dP/d(-x) is positive (pressure increases in -x)
+            # But we want pressure to decrease in flow direction, so:
+            # P[j] = P[j+1] + dP_dx_cold[j] * dx
+            # Since dP_dx_cold is negative and dx is positive, this gives pressure drop
             for j in range(self.n - 1, -1, -1):
-                P_cold[j] = P_cold[j+1] - dP_dx_cold[j] * self.dx
+                # dP_dx_cold is negative (pressure drop in +x)
+                # For cold flowing -x, pressure still drops, so we add the negative gradient
+                P_cold[j] = P_cold[j+1] + dP_dx_cold[j] * self.dx
+                # Ensure pressure doesn't go negative
+                P_cold[j] = max(P_cold[j], 1e3)  # Minimum 1 kPa
             
             # Check convergence
             err = max(
@@ -272,9 +394,17 @@ class MacroModel:
         Q = self.config.fluid.m_dot_hot * (h_hot[0] - h_hot[-1])
         
         # Pressure drops
+        # Hot side: inlet at x=0 (index 0), outlet at x=L (index -1)
+        # Pressure drop is positive (inlet - outlet)
         delta_P_hot = P_hot[0] - P_hot[-1]
+        
         # Cold side: inlet at x=L (index -1), outlet at x=0 (index 0)
+        # Pressure drop is positive (inlet - outlet)
         delta_P_cold = P_cold[-1] - P_cold[0]
+        
+        # Ensure pressure drops are positive (pressure always decreases in flow direction)
+        delta_P_hot = max(0.0, delta_P_hot)
+        delta_P_cold = max(0.0, delta_P_cold)
         
         return MacroModelResult(
             Q=Q,

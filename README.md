@@ -133,6 +133,30 @@ python scripts/calibrate_from_experiments.py \
 
 Synthetic test data is available at `data/experimental/synthetic_tpms_primitive_data.csv` for testing.
 
+## Benchmark Testing
+
+### Iyer et al. (2022) Benchmark
+
+The code includes test cases for room-temperature TPMS heat exchanger performance based on Iyer et al. (2022):
+
+```bash
+# Run Iyer benchmark tests
+python -m pytest tests/test_iyer_2022_benchmark.py -v
+
+# Quick benchmark test script
+python scripts/test_iyer_benchmark.py
+```
+
+**Expected values** (Iyer et al., 2022):
+- Heat transfer: 10-100 W (for typical test conditions)
+- Pressure drop: 100-1000 Pa
+- Nusselt number: 10-50
+- Heat transfer coefficient: 100-1000 W/(m²·K)
+
+See `docs/IYER_2022_BENCHMARK.md` for detailed benchmark documentation.
+
+**Note**: The solver currently has numerical stability issues that prevent full quantitative validation. This is under investigation.
+
 ## Methodology
 
 This implementation follows the macroscopic modeling approach described in:

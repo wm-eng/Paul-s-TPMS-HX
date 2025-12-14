@@ -174,14 +174,24 @@ class TPMSOptimizerGUI:
             self.opt_vars[key] = var
             ttk.Entry(opt_frame, textvariable=var, width=15).grid(row=i, column=1, sticky=tk.W, pady=2)
         
-        # Action Buttons
-        button_frame = ttk.Frame(control_frame)
-        button_frame.grid(row=6, column=0, columnspan=2, pady=20)
+        # Action Buttons - Make them more prominent
+        button_frame = ttk.LabelFrame(control_frame, text="Actions", padding="10")
+        button_frame.grid(row=6, column=0, columnspan=2, pady=20, sticky=(tk.W, tk.E))
         
-        ttk.Button(button_frame, text="Load Config", command=self._load_config).pack(pady=5, fill=tk.X)
-        ttk.Button(button_frame, text="Solve", command=self._solve).pack(pady=5, fill=tk.X)
-        ttk.Button(button_frame, text="Optimize", command=self._optimize).pack(pady=5, fill=tk.X)
-        ttk.Button(button_frame, text="Export Results", command=self._export_results).pack(pady=5, fill=tk.X)
+        # Primary action buttons with larger size
+        self.solve_button = ttk.Button(button_frame, text="▶ Run Simulation", 
+                                       command=self._solve, width=25)
+        self.solve_button.pack(pady=8, fill=tk.X)
+        
+        self.optimize_button = ttk.Button(button_frame, text="⚡ Optimize", 
+                                         command=self._optimize, width=25)
+        self.optimize_button.pack(pady=8, fill=tk.X)
+        
+        # Secondary buttons
+        ttk.Separator(button_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        
+        ttk.Button(button_frame, text="Load Config", command=self._load_config).pack(pady=3, fill=tk.X)
+        ttk.Button(button_frame, text="Export Results", command=self._export_results).pack(pady=3, fill=tk.X)
         
         # Status
         self.status_var = tk.StringVar(value="Ready")
@@ -404,6 +414,19 @@ class TPMSOptimizerGUI:
             # TODO: Implement config loading from JSON
             messagebox.showinfo("Info", "Config loading from JSON not yet implemented")
     
+    def _load_rve_db(self):
+        """Load RVE database from configured path."""
+        try:
+            rve_path = self.rve_path_var.get()
+            if not os.path.exists(rve_path):
+                # Try relative to project root
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                rve_path = os.path.join(project_root, rve_path)
+            self.rve_db = RVEDatabase(rve_path)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load RVE database: {e}")
+            raise
+    
     def _solve(self):
         """Solve the model with current configuration."""
         try:
@@ -413,8 +436,13 @@ class TPMSOptimizerGUI:
             config = self._get_config_from_ui()
             self.config = config
             
-            if not self.rve_db:
-                self._load_rve_db()
+            # Load RVE database
+            rve_path = config.rve_table_path
+            if not os.path.exists(rve_path):
+                # Try relative to project root
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                rve_path = os.path.join(project_root, rve_path)
+            self.rve_db = RVEDatabase(rve_path)
             
             model = MacroModel(config, self.rve_db)
             d_field = np.full(config.geometry.n_segments, config.optimization.d_init)
@@ -425,11 +453,11 @@ class TPMSOptimizerGUI:
             self.model = model
             
             self._update_visualizations()
-            self.status_var.set("Solve complete")
+            self.status_var.set("Solve complete ✓")
             
         except Exception as e:
             messagebox.showerror("Error", f"Solve failed: {e}")
-            self.status_var.set("Solve failed")
+            self.status_var.set("Solve failed ✗")
             import traceback
             traceback.print_exc()
     
@@ -437,14 +465,19 @@ class TPMSOptimizerGUI:
         """Run optimization."""
         def optimize_thread():
             try:
-                self.status_var.set("Optimizing...")
+                self.root.after(0, lambda: self.status_var.set("Optimizing..."))
                 self.root.update()
                 
                 config = self._get_config_from_ui()
                 self.config = config
                 
-                if not self.rve_db:
-                    self._load_rve_db()
+                # Load RVE database
+                rve_path = config.rve_table_path
+                if not os.path.exists(rve_path):
+                    # Try relative to project root
+                    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                    rve_path = os.path.join(project_root, rve_path)
+                self.rve_db = RVEDatabase(rve_path)
                 
                 opt_result = optimize(config, self.rve_db, log_file=None)
                 
@@ -456,11 +489,11 @@ class TPMSOptimizerGUI:
                     self.model = model
                 
                 self.root.after(0, self._update_visualizations)
-                self.root.after(0, lambda: self.status_var.set("Optimization complete"))
+                self.root.after(0, lambda: self.status_var.set("Optimization complete ✓"))
                 
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror("Error", f"Optimization failed: {e}"))
-                self.root.after(0, lambda: self.status_var.set("Optimization failed"))
+                self.root.after(0, lambda: self.status_var.set("Optimization failed ✗"))
                 import traceback
                 traceback.print_exc()
         

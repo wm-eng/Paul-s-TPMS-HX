@@ -3,12 +3,15 @@
 
 import sys
 import os
+import tkinter as tk
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from hxopt.gui import main
+from hxopt.gui import TPMSOptimizerGUI
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    app = TPMSOptimizerGUI(root)
+    root.mainloop()
 

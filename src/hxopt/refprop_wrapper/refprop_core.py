@@ -159,18 +159,54 @@ class REFPROPInterface:
     
     def _find_refprop_library(self) -> Optional[str]:
         """Find REFPROP library path."""
+        import platform
+        
         # Check environment variable first
         if 'REFPROP_LIBRARY' in os.environ:
             path = os.environ['REFPROP_LIBRARY']
             if os.path.exists(path):
                 return path
         
-        # Common locations
+        # Platform-specific library names
+        system = platform.system()
+        if system == 'Darwin':  # macOS
+            lib_names = ['librefprop.dylib', 'refprop.dylib']
+        elif system == 'Windows':
+            lib_names = ['refprop.dll', 'librefprop.dll']
+        elif system == 'Linux':
+            lib_names = ['librefprop.so', 'refprop.so']
+        else:
+            lib_names = ['librefprop.dylib', 'refprop.dll', 'librefprop.so']
+        
+        # Find REFPROP_9 directory and look for library there
+        def _find_refprop9_paths():
+            """Find potential REFPROP_9 paths."""
+            current_file = os.path.abspath(__file__)
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
+            
+            paths = [
+                os.path.join(project_root, 'REFPROP_9'),
+                os.path.join(project_root, 'Hyflux', 'REFPROP_9'),
+                os.path.join(os.path.expanduser('~'), 'HyFlux_Hx', 'Hyflux', 'REFPROP_9'),
+                os.path.join(os.path.dirname(project_root), 'HyFlux_Hx', 'Hyflux', 'REFPROP_9'),
+                os.environ.get('REFPROP9_PATH', ''),
+            ]
+            return [p for p in paths if p and os.path.exists(p)]
+        
+        # Check REFPROP_9 directories first (most likely location)
+        refprop9_paths = _find_refprop9_paths()
+        for refprop9_path in refprop9_paths:
+            for lib_name in lib_names:
+                lib_path = os.path.join(refprop9_path, lib_name)
+                if os.path.exists(lib_path):
+                    return lib_path
+        
+        # Common system locations
         common_paths = [
-            os.path.join(os.path.dirname(__file__), '..', '..', '..', 'REFPROP_9', 'librefprop.dylib'),
-            os.path.join(os.path.expanduser('~'), 'REFPROP_9', 'librefprop.dylib'),
-            '/usr/local/lib/librefprop.dylib',
-            '/Applications/REFPROP/librefprop.dylib',
+            os.path.join(os.path.dirname(__file__), '..', '..', '..', 'REFPROP_9', lib_names[0]),
+            os.path.join(os.path.expanduser('~'), 'REFPROP_9', lib_names[0]),
+            '/usr/local/lib/' + lib_names[0],
+            '/Applications/REFPROP/' + lib_names[0],
         ]
         
         for path in common_paths:

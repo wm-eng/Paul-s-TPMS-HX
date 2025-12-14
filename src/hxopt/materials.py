@@ -35,6 +35,33 @@ def _find_refprop9_paths():
     valid_paths = [p for p in paths if p and os.path.exists(p)]
     return valid_paths
 
+def _find_refprop_library(refprop9_path: str):
+    """Find REFPROP library file (librefprop.dylib, refprop.dll, etc.) in REFPROP_9 directory."""
+    import os
+    import platform
+    
+    if not refprop9_path or not os.path.exists(refprop9_path):
+        return None
+    
+    # Platform-specific library names
+    system = platform.system()
+    if system == 'Darwin':  # macOS
+        lib_names = ['librefprop.dylib', 'refprop.dylib']
+    elif system == 'Windows':
+        lib_names = ['refprop.dll', 'librefprop.dll']
+    elif system == 'Linux':
+        lib_names = ['librefprop.so', 'refprop.so']
+    else:
+        lib_names = ['librefprop.dylib', 'refprop.dll', 'librefprop.so']
+    
+    # Look for library in REFPROP_9 directory
+    for lib_name in lib_names:
+        lib_path = os.path.join(refprop9_path, lib_name)
+        if os.path.exists(lib_path):
+            return lib_path
+    
+    return None
+
 # Try to import REFPROP from various sources
 try:
     import sys
@@ -48,12 +75,18 @@ try:
             refprop9_paths = _find_refprop9_paths()
             refprop_data_path = refprop9_paths[0] if refprop9_paths else None
             
-            # Set RPPREFIX environment variable for REFPROP data
+            # Find library file
+            refprop_library_path = None
             if refprop_data_path:
+                refprop_library_path = _find_refprop_library(refprop_data_path)
+                # Set environment variables for REFPROP
                 os.environ['RPPREFIX'] = refprop_data_path
+                if refprop_library_path:
+                    os.environ['REFPROP_LIBRARY'] = refprop_library_path
             
             try:
                 HYFLUX_REFPROP_INTERFACE = REFPROPInterface(
+                    refprop_library_path=refprop_library_path,
                     refprop_data_path=refprop_data_path
                 )
                 if HYFLUX_REFPROP_INTERFACE.refprop_available:

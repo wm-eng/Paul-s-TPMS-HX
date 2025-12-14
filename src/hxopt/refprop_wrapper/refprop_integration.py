@@ -81,8 +81,46 @@ class REFPROPInterface:
         self.rp = None
         self._initialize_refprop()
     
+    def _find_refprop_library_auto(self) -> Optional[str]:
+        """Automatically find REFPROP library in common locations."""
+        import platform
+        
+        # Platform-specific library names
+        system = platform.system()
+        if system == 'Darwin':  # macOS
+            lib_names = ['librefprop.dylib', 'refprop.dylib']
+        elif system == 'Windows':
+            lib_names = ['refprop.dll', 'librefprop.dll']
+        elif system == 'Linux':
+            lib_names = ['librefprop.so', 'refprop.so']
+        else:
+            lib_names = ['librefprop.dylib', 'refprop.dll', 'librefprop.so']
+        
+        # Find REFPROP_9 directory
+        current_file = os.path.abspath(__file__)
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
+        
+        refprop9_paths = [
+            os.path.join(project_root, 'REFPROP_9'),
+            os.path.join(project_root, 'Hyflux', 'REFPROP_9'),
+            os.path.join(os.path.expanduser('~'), 'HyFlux_Hx', 'Hyflux', 'REFPROP_9'),
+            os.path.join(os.path.dirname(project_root), 'HyFlux_Hx', 'Hyflux', 'REFPROP_9'),
+        ]
+        
+        # Check REFPROP_9 directories
+        for refprop9_path in refprop9_paths:
+            if os.path.exists(refprop9_path):
+                for lib_name in lib_names:
+                    lib_path = os.path.join(refprop9_path, lib_name)
+                    if os.path.exists(lib_path):
+                        return lib_path
+        
+        return None
+    
     def _find_refprop_library(self) -> Optional[str]:
         """Find REFPROP shared library path with smart auto-discovery"""
+        import platform
+        
         # Check environment variables first (highest priority)
         env_vars = ["REFPROP_LIBRARY", "REFPROP_PATH"]
         for env_var in env_vars:
@@ -91,7 +129,37 @@ class REFPROPInterface:
                 if os.path.exists(path):
                     return path
         
-        # Common REFPROP library paths
+        # Platform-specific library names
+        system = platform.system()
+        if system == 'Darwin':  # macOS
+            lib_names = ['librefprop.dylib', 'refprop.dylib']
+        elif system == 'Windows':
+            lib_names = ['refprop.dll', 'librefprop.dll']
+        elif system == 'Linux':
+            lib_names = ['librefprop.so', 'refprop.so']
+        else:
+            lib_names = ['librefprop.dylib', 'refprop.dll', 'librefprop.so']
+        
+        # Find REFPROP_9 directory (most likely location in this project)
+        current_file = os.path.abspath(__file__)
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
+        
+        refprop9_paths = [
+            os.path.join(project_root, 'REFPROP_9'),
+            os.path.join(project_root, 'Hyflux', 'REFPROP_9'),
+            os.path.join(os.path.expanduser('~'), 'HyFlux_Hx', 'Hyflux', 'REFPROP_9'),
+            os.path.join(os.path.dirname(project_root), 'HyFlux_Hx', 'Hyflux', 'REFPROP_9'),
+        ]
+        
+        # Check REFPROP_9 directories first
+        for refprop9_path in refprop9_paths:
+            if os.path.exists(refprop9_path):
+                for lib_name in lib_names:
+                    lib_path = os.path.join(refprop9_path, lib_name)
+                    if os.path.exists(lib_path):
+                        return lib_path
+        
+        # Common system REFPROP library paths
         common_paths = [
             "/usr/local/lib/librefprop.dylib",  # macOS Homebrew
             "/Applications/REFPROP/librefprop.dylib",  # macOS official
@@ -110,12 +178,11 @@ class REFPROPInterface:
             build_paths = [
                 os.path.expanduser("~/REFPROP-cmake/build/librefprop.dylib"),
                 os.path.expanduser("~/GitHub/REFPROP-cmake/build/librefprop.dylib"),
-                "/Volumes/Lexar4TB/GitHub/Hyflux/REFPROP-cmake/build/librefprop.dylib",  # Your current setup
+                "/Volumes/Lexar4TB/GitHub/Hyflux/REFPROP-cmake/build/librefprop.dylib",
             ]
             
             for path in build_paths:
                 if os.path.exists(path):
-                    print(f"🔍 Auto-discovered REFPROP library: {path}")
                     return path
         
         return None
@@ -141,8 +208,29 @@ class REFPROPInterface:
                 # Test REFPROP functionality
                 self._test_refprop()
             else:
-                print("⚠️  REFPROP library not found - check REFPROP_LIBRARY environment variable")
-                REFPROP_AVAILABLE = False
+                # Try to find library automatically before warning
+                found_lib = self._find_refprop_library()
+                if found_lib:
+                    os.environ['REFPROP_LIBRARY'] = found_lib
+                    self.refprop_library_path = found_lib
+                    # Retry initialization
+                    try:
+                        self.rp = REFPROPFunctionLibrary(found_lib)
+                        if self.refprop_data_path:
+                            self.rp.SETPATHdll(self.refprop_data_path)
+                        self._check_refprop_data()
+                        self._setup_refprop()
+                        self._test_refprop()
+                        REFPROP_AVAILABLE = True
+                    except Exception as e:
+                        # Only warn if retry also fails
+                        print(f"⚠️  REFPROP library found but initialization failed: {e}")
+                        REFPROP_AVAILABLE = False
+                else:
+                    # Only warn if we really can't find it anywhere
+                    # (This should rarely happen now that we check REFPROP_9)
+                    pass  # Don't print warning - refprop_core.py will handle it
+                    REFPROP_AVAILABLE = False
                 
         except Exception as e:
             print(f"⚠️  REFPROP initialization failed: {e}")
