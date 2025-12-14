@@ -1,11 +1,43 @@
 """1D/2D counterflow macromodel solver (porous-equivalent)."""
 
 import numpy as np
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Optional, Tuple
 from .config import Config
 from .materials import ConstantProperties
 from .rve_db import RVEDatabase
 from .flow_paths import FlowPath, FlowPathType
+
+
+def _get_fluid_limits(fluid_name: Optional[str]) -> Tuple[float, float, float, float]:
+    """
+    Get temperature and pressure limits for a fluid.
+    
+    Parameters
+    ----------
+    fluid_name : str or None
+        Fluid name (e.g., 'helium', 'hydrogen')
+        
+    Returns
+    -------
+    (T_min, T_max, P_min, P_max) : tuple
+        Temperature limits in K, pressure limits in Pa
+    """
+    if fluid_name is None:
+        # Default conservative limits
+        return 2.0, 1000.0, 1e3, 1e8
+    
+    fluid_lower = fluid_name.lower()
+    
+    # Fluid-specific limits based on REFPROP/CoolProp valid ranges
+    if fluid_lower in ['helium', 'he']:
+        # Helium: triple point at 2.1768 K, valid up to ~1000 K
+        return 2.2, 1000.0, 1e3, 1e8  # T_min slightly above triple point
+    elif fluid_lower in ['hydrogen', 'h2', 'lh2']:
+        # Hydrogen: triple point at 13.957 K, valid up to 1000 K (REFPROP max)
+        return 14.0, 1000.0, 1e3, 1e8  # T_min slightly above triple point
+    else:
+        # Unknown fluid: use conservative defaults
+        return 2.0, 1000.0, 1e3, 1e8
 
 
 class MacroModelResult(NamedTuple):
@@ -66,6 +98,13 @@ class MacroModel:
                 fluid_name=config.fluid.cold_fluid_name,
                 backend=backend,
             )
+            # Get fluid-specific limits for validation
+            self.hot_T_min, self.hot_T_max, self.hot_P_min, self.hot_P_max = _get_fluid_limits(
+                config.fluid.hot_fluid_name
+            )
+            self.cold_T_min, self.cold_T_max, self.cold_P_min, self.cold_P_max = _get_fluid_limits(
+                config.fluid.cold_fluid_name
+            )
         else:
             # Use constant properties
             self.props_hot = ConstantProperties(
@@ -82,6 +121,9 @@ class MacroModel:
                 T_sat_ref=20.0,  # K, approximate LH2 saturation at 1 bar
                 dT_sat_dP=1e-5,  # K/Pa, rough estimate
             )
+            # For constant properties, use conservative limits
+            self.hot_T_min, self.hot_T_max, self.hot_P_min, self.hot_P_max = 2.0, 1000.0, 1e3, 1e8
+            self.cold_T_min, self.cold_T_max, self.cold_P_min, self.cold_P_max = 2.0, 1000.0, 1e3, 1e8
         
         # Initialize flow paths
         if self.use_2d:
@@ -169,19 +211,35 @@ class MacroModel:
         
         # Initialize temperature and pressure profiles with better initial guess
         # Linear interpolation between inlets for better initial condition
+        # Ensure initial temperatures are within valid ranges
+        T_hot_out_guess = max(
+            self.config.fluid.T_hot_in - 10.0,
+            self.hot_T_min
+        )
+        T_cold_out_guess = min(
+            self.config.fluid.T_cold_in + 10.0,
+            self.cold_T_max
+        )
+        
         T_hot = np.linspace(
             self.config.fluid.T_hot_in,
-            self.config.fluid.T_hot_in - 10.0,  # Assume some cooling
+            T_hot_out_guess,
             self.n + 1
         )
         T_cold = np.linspace(
-            self.config.fluid.T_cold_in + 10.0,  # Assume some heating
+            T_cold_out_guess,
             self.config.fluid.T_cold_in,
             self.n + 1
         )
         T_solid = (T_hot + T_cold) / 2.0
         P_hot = np.full(self.n + 1, self.config.fluid.P_hot_in)
         P_cold = np.full(self.n + 1, self.config.fluid.P_cold_in)
+        
+        # Ensure initial values are within valid ranges
+        T_hot = np.clip(T_hot, self.hot_T_min, self.hot_T_max)
+        T_cold = np.clip(T_cold, self.cold_T_min, self.cold_T_max)
+        P_hot = np.clip(P_hot, self.hot_P_min, self.hot_P_max)
+        P_cold = np.clip(P_cold, self.cold_P_min, self.cold_P_max)
         
         # Initialize enthalpies using reference temperature
         # Use inlet conditions for reference enthalpy
@@ -216,16 +274,43 @@ class MacroModel:
             
             # Compute densities and properties at current temperatures
             # Ensure valid inputs (no NaN, no negative pressure) before property lookup
-            T_hot_safe = np.clip(T_hot[:-1], 1.0, 1e4)  # 1K to 10000K
-            T_cold_safe = np.clip(T_cold[:-1], 1.0, 1e4)
-            P_hot_safe = np.clip(P_hot[:-1], 1e3, 1e8)  # 1kPa to 100MPa
-            P_cold_safe = np.clip(P_cold[:-1], 1e3, 1e8)
+            # Use fluid-specific limits
+            T_hot_safe = np.clip(T_hot[:-1], self.hot_T_min, self.hot_T_max)
+            T_cold_safe = np.clip(T_cold[:-1], self.cold_T_min, self.cold_T_max)
+            P_hot_safe = np.clip(P_hot[:-1], self.hot_P_min, self.hot_P_max)
+            P_cold_safe = np.clip(P_cold[:-1], self.cold_P_min, self.cold_P_max)
             
-            # Replace NaN with safe values
-            T_hot_safe = np.nan_to_num(T_hot_safe, nan=300.0, posinf=300.0, neginf=300.0)
-            T_cold_safe = np.nan_to_num(T_cold_safe, nan=20.0, posinf=20.0, neginf=20.0)
-            P_hot_safe = np.nan_to_num(P_hot_safe, nan=self.config.fluid.P_hot_in, posinf=self.config.fluid.P_hot_in, neginf=self.config.fluid.P_hot_in)
-            P_cold_safe = np.nan_to_num(P_cold_safe, nan=self.config.fluid.P_cold_in, posinf=self.config.fluid.P_cold_in, neginf=self.config.fluid.P_cold_in)
+            # Replace NaN/inf with safe values (use inlet conditions as defaults)
+            T_hot_safe = np.nan_to_num(
+                T_hot_safe, 
+                nan=self.config.fluid.T_hot_in, 
+                posinf=self.config.fluid.T_hot_in, 
+                neginf=self.config.fluid.T_hot_in
+            )
+            T_cold_safe = np.nan_to_num(
+                T_cold_safe, 
+                nan=self.config.fluid.T_cold_in, 
+                posinf=self.config.fluid.T_cold_in, 
+                neginf=self.config.fluid.T_cold_in
+            )
+            P_hot_safe = np.nan_to_num(
+                P_hot_safe, 
+                nan=self.config.fluid.P_hot_in, 
+                posinf=self.config.fluid.P_hot_in, 
+                neginf=self.config.fluid.P_hot_in
+            )
+            P_cold_safe = np.nan_to_num(
+                P_cold_safe, 
+                nan=self.config.fluid.P_cold_in, 
+                posinf=self.config.fluid.P_cold_in, 
+                neginf=self.config.fluid.P_cold_in
+            )
+            
+            # Final clamp after NaN replacement (in case NaN was replaced with out-of-range value)
+            T_hot_safe = np.clip(T_hot_safe, self.hot_T_min, self.hot_T_max)
+            T_cold_safe = np.clip(T_cold_safe, self.cold_T_min, self.cold_T_max)
+            P_hot_safe = np.clip(P_hot_safe, self.hot_P_min, self.hot_P_max)
+            P_cold_safe = np.clip(P_cold_safe, self.cold_P_min, self.cold_P_max)
             
             rho_hot = self.props_hot.density(T_hot_safe, P_hot_safe)
             rho_cold = self.props_cold.density(T_cold_safe, P_cold_safe)
@@ -292,9 +377,8 @@ class MacroModel:
                 cp_use = cp_hot[i-1] if i <= self.n else cp_hot[-1]
                 T_hot_new = h_hot[i] / cp_use
                 
-                # Clamp temperature to physical bounds
-                # Hot side should cool down as it flows
-                T_hot_new = float(np.clip(T_hot_new, T_hot_min, T_hot_max))
+                # Clamp temperature to fluid-specific limits
+                T_hot_new = float(np.clip(T_hot_new, self.hot_T_min, self.hot_T_max))
                 
                 # Under-relaxation for temperature
                 T_hot[i] = float((1 - self.config.solver.relax) * T_hot[i] + \
@@ -326,10 +410,8 @@ class MacroModel:
                 # Convert enthalpy to temperature
                 T_cold_new = h_cold[j] / cp_cold[j]
                 
-                # Clamp temperature - cold side should heat up, so T_cold[j] >= T_cold_in
-                T_cold_min = self.config.fluid.T_cold_in
-                T_cold_max = self.config.fluid.T_hot_in
-                T_cold_new = float(np.clip(T_cold_new, T_cold_min, T_cold_max))
+                # Clamp temperature to fluid-specific limits
+                T_cold_new = float(np.clip(T_cold_new, self.cold_T_min, self.cold_T_max))
                 
                 # Under-relaxation for temperature
                 T_cold[j] = float((1 - self.config.solver.relax) * T_cold[j] + \
@@ -344,9 +426,9 @@ class MacroModel:
             denominator = h_htc_hot + h_htc_cold + 1e-10
             T_solid_new = (h_htc_hot * T_hot[:-1] + h_htc_cold * T_cold[:-1]) / denominator
             
-            # Clamp solid temperature (should be between hot and cold)
-            T_solid_min = min(self.config.fluid.T_cold_in, self.config.fluid.T_hot_in)
-            T_solid_max = max(self.config.fluid.T_cold_in, self.config.fluid.T_hot_in)
+            # Clamp solid temperature to valid range (between hot and cold limits)
+            T_solid_min = min(self.hot_T_min, self.cold_T_min)
+            T_solid_max = max(self.hot_T_max, self.cold_T_max)
             T_solid_new = np.clip(T_solid_new, T_solid_min, T_solid_max)
             
             # Under-relaxation for solid temperature
@@ -376,8 +458,8 @@ class MacroModel:
             # Hot side: flows +x, pressure decreases (dP/dx < 0)
             for i in range(1, self.n + 1):
                 P_hot[i] = float(P_hot[i-1] + dP_dx_hot[i-1] * self.dx)
-                # Ensure pressure doesn't go negative
-                P_hot[i] = max(float(P_hot[i]), 1e3)  # Minimum 1 kPa
+                # Clamp pressure to valid range
+                P_hot[i] = float(np.clip(P_hot[i], self.hot_P_min, self.hot_P_max))
             
             # Cold side: flows -x (from x=L to x=0)
             # Pressure decreases in the flow direction
@@ -393,8 +475,8 @@ class MacroModel:
                 # dP_dx_cold is negative (pressure drop in +x)
                 # For cold flowing -x, pressure still drops, so we add the negative gradient
                 P_cold[j] = float(P_cold[j+1] + dP_dx_cold[j] * self.dx)
-                # Ensure pressure doesn't go negative
-                P_cold[j] = max(float(P_cold[j]), 1e3)  # Minimum 1 kPa
+                # Clamp pressure to valid range
+                P_cold[j] = float(np.clip(P_cold[j], self.cold_P_min, self.cold_P_max))
             
             # Check convergence
             err = max(
@@ -466,15 +548,23 @@ class MacroModel:
         ds_cold = self.cold_path.segment_lengths
         
         # Initialize temperature and pressure profiles along paths
-        T_hot = np.full(self.n + 1, self.config.fluid.T_hot_in)
-        T_cold = np.full(self.n + 1, self.config.fluid.T_cold_in)
-        T_solid = (T_hot + T_cold) / 2.0
-        P_hot = np.full(self.n + 1, self.config.fluid.P_hot_in)
-        P_cold = np.full(self.n + 1, self.config.fluid.P_cold_in)
+        # Ensure initial values are within valid ranges
+        T_hot_in = np.clip(self.config.fluid.T_hot_in, self.hot_T_min, self.hot_T_max)
+        T_cold_in = np.clip(self.config.fluid.T_cold_in, self.cold_T_min, self.cold_T_max)
+        P_hot_in = np.clip(self.config.fluid.P_hot_in, self.hot_P_min, self.hot_P_max)
+        P_cold_in = np.clip(self.config.fluid.P_cold_in, self.cold_P_min, self.cold_P_max)
         
-        # Initialize enthalpies
-        h_hot = self.props_hot.specific_heat(T_hot[0], P_hot[0]) * T_hot
-        h_cold = self.props_cold.specific_heat(T_cold[0], P_cold[0]) * T_cold
+        T_hot = np.full(self.n + 1, T_hot_in)
+        T_cold = np.full(self.n + 1, T_cold_in)
+        T_solid = (T_hot + T_cold) / 2.0
+        P_hot = np.full(self.n + 1, P_hot_in)
+        P_cold = np.full(self.n + 1, P_cold_in)
+        
+        # Initialize enthalpies (use safe inlet values)
+        cp_ref_hot = self.props_hot.specific_heat(T_hot_in, P_hot_in)
+        cp_ref_cold = self.props_cold.specific_heat(T_cold_in, P_cold_in)
+        h_hot = cp_ref_hot * T_hot
+        h_cold = cp_ref_cold * T_cold
         
         # Cumulative path distance for x coordinate
         s_hot = np.concatenate([[0], np.cumsum(ds_hot)])
@@ -487,12 +577,47 @@ class MacroModel:
             T_solid_old = T_solid.copy()
             
             # Compute velocities from mass flow rates
+            # Use safe temperature and pressure values for property lookups
+            T_hot_safe_2d = np.clip(T_hot[:-1], self.hot_T_min, self.hot_T_max)
+            T_cold_safe_2d = np.clip(T_cold[:-1], self.cold_T_min, self.cold_T_max)
+            P_hot_safe_2d = np.clip(P_hot[:-1], self.hot_P_min, self.hot_P_max)
+            P_cold_safe_2d = np.clip(P_cold[:-1], self.cold_P_min, self.cold_P_max)
+            T_hot_safe_2d = np.nan_to_num(
+                T_hot_safe_2d, 
+                nan=T_hot_in, 
+                posinf=T_hot_in, 
+                neginf=T_hot_in
+            )
+            T_cold_safe_2d = np.nan_to_num(
+                T_cold_safe_2d, 
+                nan=T_cold_in, 
+                posinf=T_cold_in, 
+                neginf=T_cold_in
+            )
+            P_hot_safe_2d = np.nan_to_num(
+                P_hot_safe_2d, 
+                nan=P_hot_in, 
+                posinf=P_hot_in, 
+                neginf=P_hot_in
+            )
+            P_cold_safe_2d = np.nan_to_num(
+                P_cold_safe_2d, 
+                nan=P_cold_in, 
+                posinf=P_cold_in, 
+                neginf=P_cold_in
+            )
+            # Final clamp after NaN replacement
+            T_hot_safe_2d = np.clip(T_hot_safe_2d, self.hot_T_min, self.hot_T_max)
+            T_cold_safe_2d = np.clip(T_cold_safe_2d, self.cold_T_min, self.cold_T_max)
+            P_hot_safe_2d = np.clip(P_hot_safe_2d, self.hot_P_min, self.hot_P_max)
+            P_cold_safe_2d = np.clip(P_cold_safe_2d, self.cold_P_min, self.cold_P_max)
+            
             u_hot = self.config.fluid.m_dot_hot / (
-                self.props_hot.density(T_hot[:-1], P_hot[:-1]) * 
+                self.props_hot.density(T_hot_safe_2d, P_hot_safe_2d) * 
                 self.A_hot * eps_hot
             )
             u_cold = self.config.fluid.m_dot_cold / (
-                self.props_cold.density(T_cold[:-1], P_cold[:-1]) * 
+                self.props_cold.density(T_cold_safe_2d, P_cold_safe_2d) * 
                 self.A_cold * eps_cold
             )
             
@@ -506,8 +631,8 @@ class MacroModel:
             Q_vol_cold = h_htc_cold * A_surf_V * (T_solid[:-1] - T_cold[:-1])
             
             # Energy balance along flow paths
-            cp_hot = self.props_hot.specific_heat(T_hot[:-1], P_hot[:-1])
-            cp_cold = self.props_cold.specific_heat(T_cold[:-1], P_cold[:-1])
+            cp_hot = self.props_hot.specific_heat(T_hot_safe_2d, P_hot_safe_2d)
+            cp_cold = self.props_cold.specific_heat(T_cold_safe_2d, P_cold_safe_2d)
             
             # Update enthalpies along hot path (forward)
             for i in range(1, self.n + 1):
@@ -536,15 +661,40 @@ class MacroModel:
             T_solid[-1] = T_solid[-2]
             
             # Pressure drop: Darcy-Forchheimer along paths
-            # Use safe temperature and pressure values for property lookups
-            T_hot_safe_2d = np.clip(T_hot[:-1], 1.0, 1e4)
-            T_cold_safe_2d = np.clip(T_cold[:-1], 1.0, 1e4)
-            P_hot_safe_2d = np.clip(P_hot[:-1], 1e3, 1e8)
-            P_cold_safe_2d = np.clip(P_cold[:-1], 1e3, 1e8)
-            T_hot_safe_2d = np.nan_to_num(T_hot_safe_2d, nan=300.0, posinf=300.0, neginf=300.0)
-            T_cold_safe_2d = np.nan_to_num(T_cold_safe_2d, nan=20.0, posinf=20.0, neginf=20.0)
-            P_hot_safe_2d = np.nan_to_num(P_hot_safe_2d, nan=self.config.fluid.P_hot_in, posinf=self.config.fluid.P_hot_in, neginf=self.config.fluid.P_hot_in)
-            P_cold_safe_2d = np.nan_to_num(P_cold_safe_2d, nan=self.config.fluid.P_cold_in, posinf=self.config.fluid.P_cold_in, neginf=self.config.fluid.P_cold_in)
+            # Use safe temperature and pressure values for property lookups (fluid-specific limits)
+            T_hot_safe_2d = np.clip(T_hot[:-1], self.hot_T_min, self.hot_T_max)
+            T_cold_safe_2d = np.clip(T_cold[:-1], self.cold_T_min, self.cold_T_max)
+            P_hot_safe_2d = np.clip(P_hot[:-1], self.hot_P_min, self.hot_P_max)
+            P_cold_safe_2d = np.clip(P_cold[:-1], self.cold_P_min, self.cold_P_max)
+            T_hot_safe_2d = np.nan_to_num(
+                T_hot_safe_2d, 
+                nan=self.config.fluid.T_hot_in, 
+                posinf=self.config.fluid.T_hot_in, 
+                neginf=self.config.fluid.T_hot_in
+            )
+            T_cold_safe_2d = np.nan_to_num(
+                T_cold_safe_2d, 
+                nan=self.config.fluid.T_cold_in, 
+                posinf=self.config.fluid.T_cold_in, 
+                neginf=self.config.fluid.T_cold_in
+            )
+            P_hot_safe_2d = np.nan_to_num(
+                P_hot_safe_2d, 
+                nan=self.config.fluid.P_hot_in, 
+                posinf=self.config.fluid.P_hot_in, 
+                neginf=self.config.fluid.P_hot_in
+            )
+            P_cold_safe_2d = np.nan_to_num(
+                P_cold_safe_2d, 
+                nan=self.config.fluid.P_cold_in, 
+                posinf=self.config.fluid.P_cold_in, 
+                neginf=self.config.fluid.P_cold_in
+            )
+            # Final clamp after NaN replacement
+            T_hot_safe_2d = np.clip(T_hot_safe_2d, self.hot_T_min, self.hot_T_max)
+            T_cold_safe_2d = np.clip(T_cold_safe_2d, self.cold_T_min, self.cold_T_max)
+            P_hot_safe_2d = np.clip(P_hot_safe_2d, self.hot_P_min, self.hot_P_max)
+            P_cold_safe_2d = np.clip(P_cold_safe_2d, self.cold_P_min, self.cold_P_max)
             
             rho_hot = self.props_hot.density(T_hot_safe_2d, P_hot_safe_2d)
             rho_cold = self.props_cold.density(T_cold_safe_2d, P_cold_safe_2d)
