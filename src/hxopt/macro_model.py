@@ -215,8 +215,20 @@ class MacroModel:
             T_solid_old = T_solid.copy()
             
             # Compute densities and properties at current temperatures
-            rho_hot = self.props_hot.density(T_hot[:-1], P_hot[:-1])
-            rho_cold = self.props_cold.density(T_cold[:-1], P_cold[:-1])
+            # Ensure valid inputs (no NaN, no negative pressure) before property lookup
+            T_hot_safe = np.clip(T_hot[:-1], 1.0, 1e4)  # 1K to 10000K
+            T_cold_safe = np.clip(T_cold[:-1], 1.0, 1e4)
+            P_hot_safe = np.clip(P_hot[:-1], 1e3, 1e8)  # 1kPa to 100MPa
+            P_cold_safe = np.clip(P_cold[:-1], 1e3, 1e8)
+            
+            # Replace NaN with safe values
+            T_hot_safe = np.nan_to_num(T_hot_safe, nan=300.0, posinf=300.0, neginf=300.0)
+            T_cold_safe = np.nan_to_num(T_cold_safe, nan=20.0, posinf=20.0, neginf=20.0)
+            P_hot_safe = np.nan_to_num(P_hot_safe, nan=self.config.fluid.P_hot_in, posinf=self.config.fluid.P_hot_in, neginf=self.config.fluid.P_hot_in)
+            P_cold_safe = np.nan_to_num(P_cold_safe, nan=self.config.fluid.P_cold_in, posinf=self.config.fluid.P_cold_in, neginf=self.config.fluid.P_cold_in)
+            
+            rho_hot = self.props_hot.density(T_hot_safe, P_hot_safe)
+            rho_cold = self.props_cold.density(T_cold_safe, P_cold_safe)
             
             # Clamp densities to prevent division by zero
             rho_hot = np.clip(rho_hot, 1e-6, 1e6)
