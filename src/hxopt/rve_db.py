@@ -76,7 +76,6 @@ class RVEDatabase:
         else:
             # Default: assume 5mm unit cell (typical for TPMS lattices)
             self.cell_size = 5e-3  # m
-            import warnings
             warnings.warn(f"cell_size not specified in CSV or parameter. Using default: {self.cell_size*1000:.1f} mm")
         
         # Sort by d for interpolation
