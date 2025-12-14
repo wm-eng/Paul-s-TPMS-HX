@@ -340,11 +340,11 @@ class REFPROPInterface:
             z = [1.0]  # Pure fluid
             
             result = rp.REFPROPdll(fluid, "TP", refprop_prop, 0, 0, 0, T, P / 1000.0, z)
-            
+                
             # Check for errors
             if hasattr(result, 'ierr') and result.ierr != 0:
-                raise ValueError(f"REFPROP error {result.ierr}: {result.herr}")
-            
+                    raise ValueError(f"REFPROP error {result.ierr}: {result.herr}")
+                
             # Extract output value
             if hasattr(result, 'Output'):
                 return result.Output[0]

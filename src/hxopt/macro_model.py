@@ -50,6 +50,8 @@ class MacroModel:
         """
         self.config = config
         self.rve_db = rve_db
+        # Store cell size for reference
+        self.cell_size = getattr(rve_db, 'cell_size', 5e-3)  # Default 5mm
         self.use_2d = config.geometry.use_2d
         
         # Create material property objects
@@ -272,7 +274,7 @@ class MacroModel:
                 h_hot_new = h_hot[i-1] + dh_dx_hot * self.dx
                 
                 # Under-relaxation
-                h_hot[i] = (1 - relax_h) * h_hot[i] + relax_h * h_hot_new
+                h_hot[i] = float((1 - relax_h) * h_hot[i] + relax_h * h_hot_new)
                 
                 # Convert enthalpy to temperature using current cp
                 cp_use = cp_hot[i-1] if i <= self.n else cp_hot[-1]
@@ -280,11 +282,11 @@ class MacroModel:
                 
                 # Clamp temperature to physical bounds
                 # Hot side should cool down as it flows
-                T_hot_new = np.clip(T_hot_new, T_hot_min, T_hot_max)
+                T_hot_new = float(np.clip(T_hot_new, T_hot_min, T_hot_max))
                 
                 # Under-relaxation for temperature
-                T_hot[i] = (1 - self.config.solver.relax) * T_hot[i] + \
-                           self.config.solver.relax * T_hot_new
+                T_hot[i] = float((1 - self.config.solver.relax) * T_hot[i] + \
+                           self.config.solver.relax * T_hot_new)
                 
                 # Update enthalpy to be consistent with clamped temperature
                 h_hot[i] = cp_use * T_hot[i]
@@ -307,7 +309,7 @@ class MacroModel:
                 h_cold_new = h_cold[j+1] + dh_dx_cold * self.dx
                 
                 # Under-relaxation
-                h_cold[j] = (1 - relax_h) * h_cold[j] + relax_h * h_cold_new
+                h_cold[j] = float((1 - relax_h) * h_cold[j] + relax_h * h_cold_new)
                 
                 # Convert enthalpy to temperature
                 T_cold_new = h_cold[j] / cp_cold[j]
@@ -315,14 +317,14 @@ class MacroModel:
                 # Clamp temperature - cold side should heat up, so T_cold[j] >= T_cold_in
                 T_cold_min = self.config.fluid.T_cold_in
                 T_cold_max = self.config.fluid.T_hot_in
-                T_cold_new = np.clip(T_cold_new, T_cold_min, T_cold_max)
+                T_cold_new = float(np.clip(T_cold_new, T_cold_min, T_cold_max))
                 
                 # Under-relaxation for temperature
-                T_cold[j] = (1 - self.config.solver.relax) * T_cold[j] + \
-                           self.config.solver.relax * T_cold_new
+                T_cold[j] = float((1 - self.config.solver.relax) * T_cold[j] + \
+                           self.config.solver.relax * T_cold_new)
                 
                 # Update enthalpy to be consistent
-                h_cold[j] = cp_cold[j] * T_cold[j]
+                h_cold[j] = float(cp_cold[j] * T_cold[j])
             
             # Solid energy balance with improved stability
             # Heat balance: h_htc_hot * (T_solid - T_hot) = h_htc_cold * (T_cold - T_solid)
@@ -336,9 +338,10 @@ class MacroModel:
             T_solid_new = np.clip(T_solid_new, T_solid_min, T_solid_max)
             
             # Under-relaxation for solid temperature
+            T_solid_new_float = T_solid_new.astype(float) if hasattr(T_solid_new, 'astype') else np.array(T_solid_new, dtype=float)
             T_solid[:-1] = (1 - self.config.solver.relax) * T_solid[:-1] + \
-                          self.config.solver.relax * T_solid_new
-            T_solid[-1] = T_solid[-2]  # Extrapolate
+                          self.config.solver.relax * T_solid_new_float
+            T_solid[-1] = float(T_solid[-2])  # Extrapolate
             
             # Pressure drop: Darcy-Forchheimer
             # dP/dx = -(mu/kappa) * u - beta * rho * u * |u|
@@ -359,9 +362,9 @@ class MacroModel:
             # Integrate pressure
             # Hot side: flows +x, pressure decreases (dP/dx < 0)
             for i in range(1, self.n + 1):
-                P_hot[i] = P_hot[i-1] + dP_dx_hot[i-1] * self.dx
+                P_hot[i] = float(P_hot[i-1] + dP_dx_hot[i-1] * self.dx)
                 # Ensure pressure doesn't go negative
-                P_hot[i] = max(P_hot[i], 1e3)  # Minimum 1 kPa
+                P_hot[i] = max(float(P_hot[i]), 1e3)  # Minimum 1 kPa
             
             # Cold side: flows -x (from x=L to x=0)
             # Pressure decreases in the flow direction
@@ -376,9 +379,9 @@ class MacroModel:
             for j in range(self.n - 1, -1, -1):
                 # dP_dx_cold is negative (pressure drop in +x)
                 # For cold flowing -x, pressure still drops, so we add the negative gradient
-                P_cold[j] = P_cold[j+1] + dP_dx_cold[j] * self.dx
+                P_cold[j] = float(P_cold[j+1] + dP_dx_cold[j] * self.dx)
                 # Ensure pressure doesn't go negative
-                P_cold[j] = max(P_cold[j], 1e3)  # Minimum 1 kPa
+                P_cold[j] = max(float(P_cold[j]), 1e3)  # Minimum 1 kPa
             
             # Check convergence
             err = max(

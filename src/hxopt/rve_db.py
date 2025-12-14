@@ -11,17 +11,27 @@ class RVEDatabase:
     """
     RVE property database with interpolation.
     
+    Based on Catchpole-Smith et al. (2019), thermal conductivity is primarily
+    a function of volume fraction (porosity ε), not just the design variable d.
+    
     Provides functions:
     - kappa_hot(d): Permeability (m²)
     - beta_hot(d): Forchheimer coefficient (1/m)
-    - eps_hot(d): Porosity (dimensionless)
-    - lambda_solid(d): Solid thermal conductivity (W/(m·K))
+    - eps_hot(d): Porosity/volume fraction (dimensionless) - PRIMARY PARAMETER
+    - lambda_solid(d, eps=None): Solid thermal conductivity (W/(m·K))
+      Accounts for volume fraction effects per paper findings
     - A_surf_V(d): Surface area per unit volume (1/m)
     - h_hot(u): Heat transfer coefficient (W/(m²·K)) as function of velocity
     - h_cold(u): Heat transfer coefficient for cold side
+    
+    Attributes
+    ----------
+    cell_size : float, optional
+        Unit cell size (m). Larger cells typically have higher conductivity
+        due to intra-cell convection and better interface coupling.
     """
     
-    def __init__(self, csv_path: str):
+    def __init__(self, csv_path: str, cell_size: Optional[float] = None):
         """
         Load RVE table from CSV.
         
@@ -31,6 +41,10 @@ class RVEDatabase:
             Path to CSV file with columns:
             d, kappa_hot, beta_hot, eps_hot, lambda_solid,
             h_a_hot, h_b_hot, h_a_cold, h_b_cold, A_surf_V
+            Optional: cell_size (unit cell size in m)
+        cell_size : float, optional
+            Unit cell size (m). If not provided, will try to read from CSV
+            or use default. Larger cells typically have higher conductivity.
         """
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"RVE table not found: {csv_path}")
@@ -43,6 +57,19 @@ class RVEDatabase:
         if missing:
             raise ValueError(f"Missing columns in RVE table: {missing}")
         
+        # Get cell size (unit cell dimension in m)
+        # Per Catchpole-Smith et al. (2019), larger cells have higher conductivity
+        if cell_size is not None:
+            self.cell_size = float(cell_size)
+        elif 'cell_size' in df.columns:
+            # Use cell size from CSV (should be constant for a given table)
+            self.cell_size = float(df['cell_size'].iloc[0])
+        else:
+            # Default: assume 5mm unit cell (typical for TPMS lattices)
+            self.cell_size = 5e-3  # m
+            import warnings
+            warnings.warn(f"cell_size not specified in CSV or parameter. Using default: {self.cell_size*1000:.1f} mm")
+        
         # Sort by d for interpolation
         df = df.sort_values('d')
         d = df['d'].values
@@ -51,11 +78,24 @@ class RVEDatabase:
         self.d_min = float(d.min())
         self.d_max = float(d.max())
         
+        # Store porosity (volume fraction) as PRIMARY PARAMETER
+        # Per Catchpole-Smith et al. (2019), thermal conductivity is primarily
+        # a function of volume fraction, not unit cell type
+        self._eps_hot = PchipInterpolator(d, df['eps_hot'].values)
+        eps_values = df['eps_hot'].values
+        
         # Create interpolators (Pchip preserves monotonicity)
         self._kappa_hot = PchipInterpolator(d, df['kappa_hot'].values)
         self._beta_hot = PchipInterpolator(d, df['beta_hot'].values)
-        self._eps_hot = PchipInterpolator(d, df['eps_hot'].values)
-        self._lambda_solid = PchipInterpolator(d, df['lambda_solid'].values)
+        
+        # Lambda_solid: Store base values, but will account for volume fraction
+        # The paper shows lambda ~ f(volume_fraction, cell_size, unit_cell_type)
+        # For now, store the tabulated values but note they should correlate with eps
+        self._lambda_solid_base = PchipInterpolator(d, df['lambda_solid'].values)
+        
+        # Store volume fraction (1 - porosity) for thermal conductivity calculation
+        # Volume fraction = 1 - eps (fraction of solid material)
+        self._vol_frac = PchipInterpolator(d, 1.0 - eps_values)
         
         # Surface area per unit volume (A_surf/V)
         if 'A_surf_V' in df.columns:
@@ -125,7 +165,11 @@ class RVEDatabase:
     
     def eps_hot(self, d: np.ndarray) -> np.ndarray:
         """
-        Porosity for hot side. Dimensionless.
+        Porosity (volume fraction of void space) for hot side.
+        Dimensionless. This is a PRIMARY PARAMETER per Catchpole-Smith et al. (2019).
+        
+        Volume fraction of solid = 1 - eps
+        Thermal conductivity is primarily a function of this volume fraction.
         
         Parameters
         ----------
@@ -135,14 +179,15 @@ class RVEDatabase:
         Returns
         -------
         eps : np.ndarray
-            Porosity values
+            Porosity values (0 = fully solid, 1 = fully void)
         """
         d = self._clamp_d(np.asarray(d))
         return self._eps_hot(d)
     
-    def lambda_solid(self, d: np.ndarray) -> np.ndarray:
+    def volume_fraction(self, d: np.ndarray) -> np.ndarray:
         """
-        Solid thermal conductivity. Units: W/(m·K).
+        Volume fraction of solid material (1 - porosity).
+        This is the PRIMARY PARAMETER for thermal conductivity per the paper.
         
         Parameters
         ----------
@@ -151,11 +196,70 @@ class RVEDatabase:
             
         Returns
         -------
-        lambda_solid : np.ndarray
-            Thermal conductivity values
+        vol_frac : np.ndarray
+            Volume fraction of solid material (0 = fully void, 1 = fully solid)
         """
         d = self._clamp_d(np.asarray(d))
-        return self._lambda_solid(d)
+        return self._vol_frac(d)
+    
+    def lambda_solid(self, d: np.ndarray, eps: Optional[np.ndarray] = None) -> np.ndarray:
+        """
+        Solid thermal conductivity accounting for volume fraction effects.
+        Units: W/(m·K).
+        
+        Per Catchpole-Smith et al. (2019), thermal conductivity is primarily
+        a function of volume fraction (1 - porosity), not just the design variable.
+        Larger cell sizes also typically have higher conductivity.
+        
+        Parameters
+        ----------
+        d : np.ndarray
+            Channel-bias field values
+        eps : np.ndarray, optional
+            Porosity values. If provided, will use these directly instead of
+            interpolating from d. This allows explicit volume fraction control.
+            
+        Returns
+        -------
+        lambda_solid : np.ndarray
+            Thermal conductivity values accounting for volume fraction effects
+        """
+        d = self._clamp_d(np.asarray(d))
+        
+        # Get volume fraction (1 - porosity)
+        if eps is not None:
+            # Use provided porosity directly
+            vol_frac = 1.0 - np.asarray(eps)
+        else:
+            # Interpolate from d
+            vol_frac = self._vol_frac(d)
+        
+        # Base thermal conductivity from interpolation
+        lambda_base = self._lambda_solid_base(d)
+        
+        # Account for volume fraction effects per paper findings
+        # The paper shows: lambda ~ f(volume_fraction)
+        # For a given material, higher volume fraction -> higher conductivity
+        # Use a simple scaling: lambda_eff = lambda_base * (vol_frac / vol_frac_ref)^n
+        # where n ~ 1-2 based on effective medium theory
+        
+        # Reference volume fraction (use mean from data)
+        vol_frac_ref = 0.5  # Typical value
+        
+        # Scaling exponent (n=1.5 is typical for porous media)
+        # This accounts for the primary dependence on volume fraction
+        n = 1.5
+        
+        # Cell size effect: larger cells have higher conductivity
+        # Per paper: larger cells allow intra-cell convection and better coupling
+        cell_size_ref = 5e-3  # Reference 5mm cell
+        cell_size_factor = (self.cell_size / cell_size_ref) ** 0.2  # Weak dependence
+        
+        # Effective thermal conductivity accounting for volume fraction
+        vol_frac_safe = np.clip(vol_frac, 0.1, 0.9)  # Clamp to reasonable range
+        lambda_eff = lambda_base * (vol_frac_safe / vol_frac_ref) ** n * cell_size_factor
+        
+        return lambda_eff
     
     def A_surf_V(self, d: np.ndarray) -> np.ndarray:
         """

@@ -54,7 +54,7 @@ class TPMSOptimizerGUI:
         
     def _create_widgets(self):
         """Create GUI widgets."""
-        # Main container
+        # Main container with scrollable left panel
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
@@ -62,9 +62,9 @@ class TPMSOptimizerGUI:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(1, weight=1)
+        main_frame.rowconfigure(0, weight=1)
         
-        # Left panel: Controls
+        # Left panel: Controls (with scrollbar)
         self._create_control_panel(main_frame)
         
         # Right panel: Visualizations
@@ -72,28 +72,89 @@ class TPMSOptimizerGUI:
         
     def _create_control_panel(self, parent):
         """Create control panel with inputs."""
-        control_frame = ttk.LabelFrame(parent, text="Configuration", padding="10")
-        control_frame.grid(row=0, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
+        # Create a frame with scrollbar for the control panel
+        control_container = ttk.Frame(parent)
+        control_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5)
+        control_container.columnconfigure(0, weight=1)
+        control_container.rowconfigure(0, weight=1)
+        
+        # Create canvas for scrolling
+        canvas = tk.Canvas(control_container, width=350)
+        scrollbar = ttk.Scrollbar(control_container, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        
+        # Bind mousewheel to canvas
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        control_frame = ttk.LabelFrame(scrollable_frame, text="Configuration", padding="10")
+        control_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Action Buttons - Make them FIRST and most prominent
+        button_frame = ttk.LabelFrame(control_frame, text="Actions", padding="10")
+        button_frame.grid(row=0, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
+        
+        # Primary START button - most prominent
+        start_button = tk.Button(button_frame, text="▶ START", 
+                                command=self._solve, 
+                                bg="#4CAF50", fg="white",
+                                font=("Arial", 14, "bold"),
+                                relief=tk.RAISED, bd=3,
+                                cursor="hand2",
+                                padx=20, pady=15)
+        start_button.pack(pady=10, fill=tk.X)
+        
+        # Secondary action buttons
+        self.solve_button = ttk.Button(button_frame, text="Run Simulation", 
+                                       command=self._solve, width=25)
+        self.solve_button.pack(pady=5, fill=tk.X)
+        
+        self.optimize_button = ttk.Button(button_frame, text="⚡ Optimize", 
+                                         command=self._optimize, width=25)
+        self.optimize_button.pack(pady=5, fill=tk.X)
+        
+        # Secondary buttons
+        ttk.Separator(button_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
+        
+        ttk.Button(button_frame, text="Load Config", command=self._load_config).pack(pady=3, fill=tk.X)
+        ttk.Button(button_frame, text="Export Results", command=self._export_results).pack(pady=3, fill=tk.X)
+        
+        # Status
+        self.status_var = tk.StringVar(value="Ready")
+        status_label = ttk.Label(button_frame, textvariable=self.status_var, foreground="blue")
+        status_label.pack(pady=5)
         
         # TPMS Structure Selection
-        ttk.Label(control_frame, text="TPMS Structure:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Label(control_frame, text="TPMS Structure:").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.tpms_var = tk.StringVar(value=self.current_tpms)
         tpms_combo = ttk.Combobox(control_frame, textvariable=self.tpms_var, 
                                    values=self.tpms_types, state="readonly", width=20)
-        tpms_combo.grid(row=0, column=1, sticky=tk.W, pady=5)
+        tpms_combo.grid(row=1, column=1, sticky=tk.W, pady=5)
         tpms_combo.bind("<<ComboboxSelected>>", self._on_tpms_change)
         
         # RVE Table Selection
-        ttk.Label(control_frame, text="RVE Table:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(control_frame, text="RVE Table:").grid(row=2, column=0, sticky=tk.W, pady=5)
         rve_frame = ttk.Frame(control_frame)
-        rve_frame.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
+        rve_frame.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5)
         self.rve_path_var = tk.StringVar(value="data/rve_tables/primitive_default.csv")
         ttk.Entry(rve_frame, textvariable=self.rve_path_var, width=25).pack(side=tk.LEFT)
         ttk.Button(rve_frame, text="Browse", command=self._browse_rve).pack(side=tk.LEFT, padx=5)
         
         # Geometry Parameters
         geom_frame = ttk.LabelFrame(control_frame, text="Geometry", padding="5")
-        geom_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+        geom_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
         
         self.geom_vars = {}
         geom_params = [
@@ -111,7 +172,7 @@ class TPMSOptimizerGUI:
         
         # Flow Path Configuration
         flow_frame = ttk.LabelFrame(control_frame, text="Flow Path (2D)", padding="5")
-        flow_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+        flow_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
         
         self.use_2d_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(flow_frame, text="Enable 2D Flow Path", 
@@ -131,7 +192,7 @@ class TPMSOptimizerGUI:
         
         # Fluid Properties
         fluid_frame = ttk.LabelFrame(control_frame, text="Fluid Properties", padding="5")
-        fluid_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+        fluid_frame.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
         
         self.fluid_vars = {}
         fluid_params = [
@@ -149,14 +210,42 @@ class TPMSOptimizerGUI:
             self.fluid_vars[key] = var
             ttk.Entry(fluid_frame, textvariable=var, width=15).grid(row=i, column=1, sticky=tk.W, pady=2)
         
-        # Real-fluid properties
+        # Real-fluid properties checkbox
         self.use_real_props_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(fluid_frame, text="Use Real-Fluid Properties (REFPROP/COOLProp)", 
-                       variable=self.use_real_props_var).grid(row=len(fluid_params), column=0, columnspan=2, sticky=tk.W, pady=5)
+                       variable=self.use_real_props_var,
+                       command=self._toggle_real_properties).grid(row=len(fluid_params), column=0, columnspan=2, sticky=tk.W, pady=5)
+        
+        # Constant properties (shown when real properties disabled)
+        const_props_frame = ttk.LabelFrame(fluid_frame, text="Constant Properties (if not using real properties)", padding="3")
+        const_props_frame.grid(row=len(fluid_params)+1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        self.const_prop_vars = {}
+        const_props = [
+            ("ρ_hot (kg/m³):", "rho_hot", 0.18),
+            ("μ_hot (Pa·s):", "mu_hot", 2.0e-5),
+            ("cp_hot (J/(kg·K)):", "cp_hot", 5200.0),
+            ("k_hot (W/(m·K)):", "k_hot", 0.15),
+            ("ρ_cold (kg/m³):", "rho_cold", 71.0),
+            ("μ_cold (Pa·s):", "mu_cold", 9.0e-6),
+            ("cp_cold (J/(kg·K)):", "cp_cold", 9600.0),
+            ("k_cold (W/(m·K)):", "k_cold", 0.1),
+        ]
+        
+        for i, (label, key, default) in enumerate(const_props):
+            row = i // 2
+            col = (i % 2) * 2
+            ttk.Label(const_props_frame, text=label).grid(row=row, column=col, sticky=tk.W, pady=1, padx=2)
+            var = tk.DoubleVar(value=default)
+            self.const_prop_vars[key] = var
+            ttk.Entry(const_props_frame, textvariable=var, width=12).grid(row=row, column=col+1, sticky=tk.W, pady=1, padx=2)
+        
+        # Initially hide constant properties (since real properties is default)
+        const_props_frame.grid_remove()
         
         # Optimization Parameters
         opt_frame = ttk.LabelFrame(control_frame, text="Optimization", padding="5")
-        opt_frame.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+        opt_frame.grid(row=6, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
         
         self.opt_vars = {}
         opt_params = [
@@ -174,28 +263,39 @@ class TPMSOptimizerGUI:
             self.opt_vars[key] = var
             ttk.Entry(opt_frame, textvariable=var, width=15).grid(row=i, column=1, sticky=tk.W, pady=2)
         
-        # Action Buttons - Make them more prominent
+        # Action Buttons - Make them more prominent and visible at top
         button_frame = ttk.LabelFrame(control_frame, text="Actions", padding="10")
-        button_frame.grid(row=6, column=0, columnspan=2, pady=20, sticky=(tk.W, tk.E))
+        button_frame.grid(row=0, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
         
-        # Primary action buttons with larger size
-        self.solve_button = ttk.Button(button_frame, text="▶ Run Simulation", 
+        # Primary START button - most prominent
+        start_button = tk.Button(button_frame, text="▶ START", 
+                                command=self._solve, 
+                                bg="#4CAF50", fg="white",
+                                font=("Arial", 14, "bold"),
+                                relief=tk.RAISED, bd=3,
+                                cursor="hand2",
+                                padx=20, pady=15)
+        start_button.pack(pady=10, fill=tk.X)
+        
+        # Secondary action buttons
+        self.solve_button = ttk.Button(button_frame, text="Run Simulation", 
                                        command=self._solve, width=25)
-        self.solve_button.pack(pady=8, fill=tk.X)
+        self.solve_button.pack(pady=5, fill=tk.X)
         
         self.optimize_button = ttk.Button(button_frame, text="⚡ Optimize", 
                                          command=self._optimize, width=25)
-        self.optimize_button.pack(pady=8, fill=tk.X)
+        self.optimize_button.pack(pady=5, fill=tk.X)
         
         # Secondary buttons
-        ttk.Separator(button_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        ttk.Separator(button_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
         
         ttk.Button(button_frame, text="Load Config", command=self._load_config).pack(pady=3, fill=tk.X)
         ttk.Button(button_frame, text="Export Results", command=self._export_results).pack(pady=3, fill=tk.X)
         
         # Status
         self.status_var = tk.StringVar(value="Ready")
-        ttk.Label(control_frame, textvariable=self.status_var, foreground="blue").grid(row=7, column=0, columnspan=2, pady=5)
+        status_label = ttk.Label(button_frame, textvariable=self.status_var, foreground="blue")
+        status_label.pack(pady=5)
         
     def _create_visualization_panel(self, parent):
         """Create visualization panel with plots."""
@@ -303,6 +403,8 @@ class TPMSOptimizerGUI:
                 n_segments=50,
             )
             
+            # Default: use real-fluid properties (REFPROP/COOLProp)
+            # But provide constant properties as fallback
             fluid = FluidConfig(
                 T_hot_in=300.0,
                 T_cold_in=20.0,
@@ -310,6 +412,16 @@ class TPMSOptimizerGUI:
                 P_cold_in=1e5,
                 m_dot_hot=0.01,
                 m_dot_cold=0.05,
+                use_real_properties=True,  # Default to real properties
+                # Provide constant properties as fallback (for helium/hydrogen at cryogenic temps)
+                rho_hot=0.18,  # kg/m³, helium at ~40K
+                mu_hot=2.0e-5,  # Pa·s
+                cp_hot=5200.0,  # J/(kg·K)
+                k_hot=0.15,  # W/(m·K)
+                rho_cold=71.0,  # kg/m³, liquid hydrogen at ~20K
+                mu_cold=9.0e-6,  # Pa·s
+                cp_cold=9600.0,  # J/(kg·K)
+                k_cold=0.1,  # W/(m·K)
             )
             
             optimization = OptimizationConfig()
@@ -325,18 +437,23 @@ class TPMSOptimizerGUI:
             self.status_var.set("Default config loaded")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load default config: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _load_rve_db(self):
         """Load RVE database."""
         try:
             rve_path = self.rve_path_var.get()
             if not os.path.exists(rve_path):
-                rve_path = os.path.join(os.path.dirname(__file__), "..", "..", rve_path)
+                # Try relative to project root
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                rve_path = os.path.join(project_root, rve_path)
             
             self.rve_db = RVEDatabase(rve_path)
             self.status_var.set(f"RVE database loaded: {os.path.basename(rve_path)}")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load RVE database: {e}")
+            # Don't raise - gracefully handle error to prevent GUI crash
     
     def _browse_rve(self):
         """Browse for RVE table file."""
@@ -360,6 +477,20 @@ class TPMSOptimizerGUI:
         """Toggle 2D flow path mode."""
         pass  # UI already handles this
     
+    def _toggle_real_properties(self):
+        """Toggle visibility of constant properties based on real properties checkbox."""
+        # Find the constant properties frame
+        for widget in self.root.winfo_children():
+            for child in widget.winfo_children():
+                if isinstance(child, ttk.Frame):
+                    for grandchild in child.winfo_children():
+                        if isinstance(grandchild, ttk.LabelFrame) and "Constant Properties" in str(grandchild.cget("text")):
+                            if self.use_real_props_var.get():
+                                grandchild.grid_remove()
+                            else:
+                                grandchild.grid()
+                            return
+    
     def _get_config_from_ui(self) -> Config:
         """Get configuration from UI inputs."""
         # Geometry
@@ -374,15 +505,31 @@ class TPMSOptimizerGUI:
         )
         
         # Fluid
-        fluid = FluidConfig(
-            T_hot_in=self.fluid_vars["T_hot_in"].get(),
-            T_cold_in=self.fluid_vars["T_cold_in"].get(),
-            P_hot_in=self.fluid_vars["P_hot_in"].get(),
-            P_cold_in=self.fluid_vars["P_cold_in"].get(),
-            m_dot_hot=self.fluid_vars["m_dot_hot"].get(),
-            m_dot_cold=self.fluid_vars["m_dot_cold"].get(),
-            use_real_properties=self.use_real_props_var.get(),
-        )
+        use_real = self.use_real_props_var.get()
+        fluid_kwargs = {
+            "T_hot_in": self.fluid_vars["T_hot_in"].get(),
+            "T_cold_in": self.fluid_vars["T_cold_in"].get(),
+            "P_hot_in": self.fluid_vars["P_hot_in"].get(),
+            "P_cold_in": self.fluid_vars["P_cold_in"].get(),
+            "m_dot_hot": self.fluid_vars["m_dot_hot"].get(),
+            "m_dot_cold": self.fluid_vars["m_dot_cold"].get(),
+            "use_real_properties": use_real,
+        }
+        
+        # Add constant properties if not using real properties
+        if not use_real:
+            fluid_kwargs.update({
+                "rho_hot": self.const_prop_vars["rho_hot"].get(),
+                "mu_hot": self.const_prop_vars["mu_hot"].get(),
+                "cp_hot": self.const_prop_vars["cp_hot"].get(),
+                "k_hot": self.const_prop_vars["k_hot"].get(),
+                "rho_cold": self.const_prop_vars["rho_cold"].get(),
+                "mu_cold": self.const_prop_vars["mu_cold"].get(),
+                "cp_cold": self.const_prop_vars["cp_cold"].get(),
+                "k_cold": self.const_prop_vars["k_cold"].get(),
+            })
+        
+        fluid = FluidConfig(**fluid_kwargs)
         
         # Optimization
         optimization = OptimizationConfig(
@@ -414,18 +561,6 @@ class TPMSOptimizerGUI:
             # TODO: Implement config loading from JSON
             messagebox.showinfo("Info", "Config loading from JSON not yet implemented")
     
-    def _load_rve_db(self):
-        """Load RVE database from configured path."""
-        try:
-            rve_path = self.rve_path_var.get()
-            if not os.path.exists(rve_path):
-                # Try relative to project root
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-                rve_path = os.path.join(project_root, rve_path)
-            self.rve_db = RVEDatabase(rve_path)
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load RVE database: {e}")
-            raise
     
     def _solve(self):
         """Solve the model with current configuration."""
