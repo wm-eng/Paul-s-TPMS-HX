@@ -144,5 +144,15 @@ After calibration, validate the RVE properties by:
 ## References
 
 - Yanagihara et al. (2025) - "Flow-priority optimization of additively manufactured variable-TPMS lattice heat exchanger based on macroscopic analysis" [arXiv:2512.10207](https://arxiv.org/pdf/2512.10207)
+- **Cheung et al. (2025)** - "Triply periodic minimal surfaces for thermo-mechanical protection"
+  - Scientific Reports volume 15, Article number: 1688 (2025)
+  - Full text: [https://www.nature.com/articles/s41598-025-85935-x](https://www.nature.com/articles/s41598-025-85935-x)
+  - DOI: [https://doi.org/10.1038/s41598-025-85935-x](https://doi.org/10.1038/s41598-025-85935-x)
+  - Local copy: `docs/s41598-025-85935-x.pdf`
+  - Provides experimental measurements of pressure drop, thermal conductivity, and mechanical properties for TPMS Primitive lattices. Includes detailed pressure drop correlations, thermal conductivity measurements for composite structures, and validation data useful for RVE property calibration.
+- **Energies 18(1), 134 (2025)** - TPMS lattice and porous media research paper. 
+  - Full text: [https://www.mdpi.com/1996-1073/18/1/134](https://www.mdpi.com/1996-1073/18/1/134)
+  - Local copy: `docs/energies-18-00134.pdf`
+  - This paper provides additional insights into TPMS lattice properties, optimization methods, and experimental validation techniques that complement the calibration process.
 - TPMS lattice property databases and experimental studies
 
