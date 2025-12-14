@@ -28,6 +28,8 @@ ENV/
 
 # REFPROP_9 symlink (points to external directory)
 REFPROP_9/
+fort.*
+*.fort
 
 # IDE
 .vscode/
