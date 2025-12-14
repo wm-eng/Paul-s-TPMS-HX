@@ -158,4 +158,7 @@ class Config:
     # Paths
     rve_table_path: str = "data/rve_tables/primitive_default.csv"
     output_dir: str = "runs"
+    
+    # Material properties
+    metal_name: Optional[str] = None  # Metal for solid phase (e.g., 'Aluminum (6061)', 'Copper (OFHC)')
 

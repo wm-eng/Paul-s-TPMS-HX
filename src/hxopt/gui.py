@@ -20,6 +20,7 @@ from .rve_db import RVEDatabase
 from .macro_model import MacroModel, MacroModelResult
 from .optimize_mma import optimize
 from .flow_paths import FlowPathType
+from .metal_properties import MetalProperties
 
 
 class TPMSOptimizerGUI:
@@ -243,9 +244,30 @@ class TPMSOptimizerGUI:
         # Initially hide constant properties (since real properties is default)
         const_props_frame.grid_remove()
         
+        # Metal Properties Selection
+        metal_frame = ttk.LabelFrame(control_frame, text="Metal Properties", padding="5")
+        metal_frame.grid(row=6, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+        
+        ttk.Label(metal_frame, text="Solid Metal:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.metal_var = tk.StringVar(value="Aluminum (6061)")
+        metal_combo = ttk.Combobox(
+            metal_frame, 
+            textvariable=self.metal_var,
+            values=MetalProperties.list_metals(),
+            state="readonly",
+            width=25
+        )
+        metal_combo.grid(row=0, column=1, sticky=tk.W, pady=5)
+        metal_combo.bind("<<ComboboxSelected>>", self._on_metal_change)
+        
+        # Metal info display
+        self.metal_info_var = tk.StringVar(value="k = 167 W/(m·K) at 300K")
+        ttk.Label(metal_frame, textvariable=self.metal_info_var, 
+                 font=("Arial", 9), foreground="gray").grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=2)
+        
         # Optimization Parameters
         opt_frame = ttk.LabelFrame(control_frame, text="Optimization", padding="5")
-        opt_frame.grid(row=6, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+        opt_frame.grid(row=7, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
         
         self.opt_vars = {}
         opt_params = [
@@ -426,12 +448,21 @@ class TPMSOptimizerGUI:
             
             optimization = OptimizationConfig()
             
+            # Default metal
+            metal_name = "Aluminum (6061)"
+            
             self.config = Config(
                 geometry=geometry,
                 fluid=fluid,
                 optimization=optimization,
                 rve_table_path="data/rve_tables/primitive_default.csv",
+                metal_name=metal_name,
             )
+            
+            # Update UI with default metal
+            if hasattr(self, 'metal_var'):
+                self.metal_var.set(metal_name)
+                self._update_metal_info()
             
             self._load_rve_db()
             self.status_var.set("Default config loaded")
@@ -449,8 +480,21 @@ class TPMSOptimizerGUI:
                 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
                 rve_path = os.path.join(project_root, rve_path)
             
-            self.rve_db = RVEDatabase(rve_path)
-            self.status_var.set(f"RVE database loaded: {os.path.basename(rve_path)}")
+            # Get metal selection
+            metal_name = self.metal_var.get() if hasattr(self, 'metal_var') else None
+            
+            # Get cell size from config if available
+            cell_size = getattr(self.config, 'rve_cell_size', None) if self.config else None
+            
+            self.rve_db = RVEDatabase(rve_path, cell_size=cell_size, metal_name=metal_name)
+            status_msg = f"RVE database loaded: {os.path.basename(rve_path)}"
+            if metal_name:
+                status_msg += f" | Metal: {metal_name}"
+            self.status_var.set(status_msg)
+            
+            # Update metal info display
+            if hasattr(self, 'metal_var'):
+                self._update_metal_info()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load RVE database: {e}")
             # Don't raise - gracefully handle error to prevent GUI crash
@@ -490,6 +534,26 @@ class TPMSOptimizerGUI:
                             else:
                                 grandchild.grid()
                             return
+    
+    def _on_metal_change(self, event=None):
+        """Handle metal selection change."""
+        self._update_metal_info()
+        # Reload RVE database with new metal
+        if hasattr(self, 'rve_db'):
+            self._load_rve_db()
+    
+    def _update_metal_info(self):
+        """Update metal info display."""
+        try:
+            metal_name = self.metal_var.get()
+            metal = MetalProperties(metal_name)
+            k_300 = metal.thermal_conductivity(300.0)
+            k_77 = metal.thermal_conductivity(77.0)
+            k_20 = metal.thermal_conductivity(20.0)
+            info = f"k = {k_300:.1f} W/(m·K) @ 300K | {k_77:.1f} @ 77K | {k_20:.1f} @ 20K"
+            self.metal_info_var.set(info)
+        except Exception as e:
+            self.metal_info_var.set(f"Error: {e}")
     
     def _get_config_from_ui(self) -> Config:
         """Get configuration from UI inputs."""
@@ -541,12 +605,16 @@ class TPMSOptimizerGUI:
             delta_P_max_cold=self.opt_vars["delta_P_max_cold"].get(),
         )
         
+        # Metal selection
+        metal_name = self.metal_var.get() if hasattr(self, 'metal_var') else None
+        
         # Config
         config = Config(
             geometry=geometry,
             fluid=fluid,
             optimization=optimization,
             rve_table_path=self.rve_path_var.get(),
+            metal_name=metal_name,
         )
         
         return config
@@ -577,7 +645,12 @@ class TPMSOptimizerGUI:
                 # Try relative to project root
                 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
                 rve_path = os.path.join(project_root, rve_path)
-            self.rve_db = RVEDatabase(rve_path)
+            # Get metal and cell size
+            metal_name = getattr(self.config, 'metal_name', None) if self.config else None
+            if not metal_name and hasattr(self, 'metal_var'):
+                metal_name = self.metal_var.get()
+            cell_size = getattr(self.config, 'rve_cell_size', None) if self.config else None
+            self.rve_db = RVEDatabase(rve_path, cell_size=cell_size, metal_name=metal_name)
             
             model = MacroModel(config, self.rve_db)
             d_field = np.full(config.geometry.n_segments, config.optimization.d_init)

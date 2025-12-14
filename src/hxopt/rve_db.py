@@ -5,6 +5,7 @@ import pandas as pd
 from scipy.interpolate import PchipInterpolator
 from typing import Callable, Optional
 import os
+import warnings
 
 
 class RVEDatabase:
@@ -31,7 +32,8 @@ class RVEDatabase:
         due to intra-cell convection and better interface coupling.
     """
     
-    def __init__(self, csv_path: str, cell_size: Optional[float] = None):
+    def __init__(self, csv_path: str, cell_size: Optional[float] = None,
+                 metal_name: Optional[str] = None, T_ref: float = 300.0):
         """
         Load RVE table from CSV.
         
@@ -45,6 +47,13 @@ class RVEDatabase:
         cell_size : float, optional
             Unit cell size (m). If not provided, will try to read from CSV
             or use default. Larger cells typically have higher conductivity.
+        metal_name : str, optional
+            Metal name for solid phase. If provided, will override
+            lambda_solid from CSV with metal's thermal conductivity.
+            See MetalProperties.list_metals() for available options.
+        T_ref : float, optional
+            Reference temperature (K) for metal conductivity lookup.
+            Default: 300K (room temperature).
         """
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"RVE table not found: {csv_path}")
@@ -90,12 +99,39 @@ class RVEDatabase:
         
         # Lambda_solid: Store base values, but will account for volume fraction
         # The paper shows lambda ~ f(volume_fraction, cell_size, unit_cell_type)
-        # For now, store the tabulated values but note they should correlate with eps
+        # If metal_name is provided, use metal's thermal conductivity as base
+        if metal_name:
+            try:
+                from .metal_properties import MetalProperties
+                metal = MetalProperties(metal_name)
+                k_metal = metal.thermal_conductivity(T_ref)
+                # Use metal conductivity as base, scaled by volume fraction
+                # The CSV lambda_solid values will be ignored in favor of metal properties
+                self.metal = metal
+                self.use_metal_properties = True
+                self.k_metal_ref = k_metal
+                warnings.warn(
+                    f"Using metal properties for {metal_name}: "
+                    f"k = {k_metal:.1f} W/(m·K) at {T_ref}K. "
+                    f"CSV lambda_solid values will be scaled by metal conductivity."
+                )
+            except ImportError:
+                warnings.warn("MetalProperties not available, using CSV values")
+                self.use_metal_properties = False
+                self.metal = None
+        else:
+            self.use_metal_properties = False
+            self.metal = None
+        
+        # Store base lambda_solid from CSV (may be overridden by metal)
         self._lambda_solid_base = PchipInterpolator(d, df['lambda_solid'].values)
         
         # Store volume fraction (1 - porosity) for thermal conductivity calculation
         # Volume fraction = 1 - eps (fraction of solid material)
         self._vol_frac = PchipInterpolator(d, 1.0 - eps_values)
+        
+        # Reference temperature for metal properties
+        self.T_ref = T_ref
         
         # Surface area per unit volume (A_surf/V)
         if 'A_surf_V' in df.columns:
@@ -202,7 +238,8 @@ class RVEDatabase:
         d = self._clamp_d(np.asarray(d))
         return self._vol_frac(d)
     
-    def lambda_solid(self, d: np.ndarray, eps: Optional[np.ndarray] = None) -> np.ndarray:
+    def lambda_solid(self, d: np.ndarray, eps: Optional[np.ndarray] = None,
+                     T: Optional[float] = None) -> np.ndarray:
         """
         Solid thermal conductivity accounting for volume fraction effects.
         Units: W/(m·K).
@@ -211,6 +248,9 @@ class RVEDatabase:
         a function of volume fraction (1 - porosity), not just the design variable.
         Larger cell sizes also typically have higher conductivity.
         
+        If metal_name was specified during initialization, uses metal's
+        temperature-dependent thermal conductivity as the base value.
+        
         Parameters
         ----------
         d : np.ndarray
@@ -218,6 +258,9 @@ class RVEDatabase:
         eps : np.ndarray, optional
             Porosity values. If provided, will use these directly instead of
             interpolating from d. This allows explicit volume fraction control.
+        T : float, optional
+            Temperature (K) for metal property lookup. If None, uses T_ref.
+            Only used if metal properties are enabled.
             
         Returns
         -------
@@ -234,8 +277,26 @@ class RVEDatabase:
             # Interpolate from d
             vol_frac = self._vol_frac(d)
         
-        # Base thermal conductivity from interpolation
-        lambda_base = self._lambda_solid_base(d)
+        # Base thermal conductivity
+        if self.use_metal_properties and self.metal is not None:
+            # Use metal's temperature-dependent thermal conductivity
+            T_use = T if T is not None else self.T_ref
+            k_metal = self.metal.thermal_conductivity(T_use)
+            
+            # Scale metal conductivity by relative magnitude from CSV
+            # This preserves the d-dependence pattern while using real metal properties
+            lambda_base_csv = self._lambda_solid_base(d)
+            lambda_base_ref = self._lambda_solid_base(np.array([0.5]))[0]  # Reference at d=0.5
+            
+            # Scale factor: preserve relative variation from CSV
+            if lambda_base_ref > 0:
+                scale_factor = k_metal / lambda_base_ref
+                lambda_base = lambda_base_csv * scale_factor
+            else:
+                lambda_base = np.full_like(d, k_metal)
+        else:
+            # Use CSV values directly
+            lambda_base = self._lambda_solid_base(d)
         
         # Account for volume fraction effects per paper findings
         # The paper shows: lambda ~ f(volume_fraction)
