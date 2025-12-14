@@ -122,8 +122,10 @@ class MacroModel:
                 dT_sat_dP=1e-5,  # K/Pa, rough estimate
             )
             # For constant properties, use conservative limits
-            self.hot_T_min, self.hot_T_max, self.hot_P_min, self.hot_P_max = 2.0, 1000.0, 1e3, 1e8
-            self.cold_T_min, self.cold_T_max, self.cold_P_min, self.cold_P_max = 2.0, 1000.0, 1e3, 1e8
+            # Pressure limits: allow outlet to go much lower to capture property effects
+            # Previous P_min=1e3 (1 kPa) was too high and clamped all outlet pressures identically
+            self.hot_T_min, self.hot_T_max, self.hot_P_min, self.hot_P_max = 2.0, 1000.0, 1e2, 1e8  # P_min: 1e3→1e2 (1→0.1 kPa)
+            self.cold_T_min, self.cold_T_max, self.cold_P_min, self.cold_P_max = 2.0, 1000.0, 1e2, 1e8  # P_min: 1e3→1e2 (1→0.1 kPa)
         
         # Initialize flow paths
         if self.use_2d:
@@ -451,8 +453,10 @@ class MacroModel:
             dP_dx_cold = -(mu_cold / kappa_cold) * u_cold - beta_cold * rho_cold * u_cold * np.abs(u_cold)
             
             # Clamp pressure gradients to prevent instability
-            dP_dx_hot = np.clip(dP_dx_hot, -1e6, 0.0)  # Negative (pressure drop)
-            dP_dx_cold = np.clip(dP_dx_cold, -1e6, 0.0)  # Negative (pressure drop)
+            # Allow much larger gradients (up to -1e8 Pa/m = -100 MPa/m) to capture property effects
+            # Previous limit of -1e6 Pa/m was too restrictive and masked property variations
+            dP_dx_hot = np.clip(dP_dx_hot, -1e8, 0.0)  # Negative (pressure drop), increased from -1e6
+            dP_dx_cold = np.clip(dP_dx_cold, -1e8, 0.0)  # Negative (pressure drop), increased from -1e6
             
             # Integrate pressure
             # Hot side: flows +x, pressure decreases (dP/dx < 0)

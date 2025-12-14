@@ -40,8 +40,10 @@ def main():
         k_cold=0.1,
         T_hot_in=300.0,
         T_cold_in=20.0,
-        P_hot_in=2e5,
-        P_cold_in=1e5,
+        # Increased inlet pressures to avoid hitting minimum limit
+        # Calibrated RVE properties still produce large pressure drops
+        P_hot_in=10e6,  # 10 MPa (increased from 200 kPa)
+        P_cold_in=5e6,  # 5 MPa (increased from 100 kPa)
         m_dot_hot=0.01,
         m_dot_cold=0.05,
     )
@@ -59,7 +61,7 @@ def main():
         fluid=fluid,
         optimization=optimization,
         rve_table_path=os.path.join(
-            os.path.dirname(__file__), '..', 'data', 'rve_tables', 'primitive_default.csv'
+            os.path.dirname(__file__), '..', 'data', 'rve_tables', 'primitive_calibrated.csv'
         ),
         output_dir=os.path.join(os.path.dirname(__file__), '..', 'runs', 'test'),
     )
@@ -93,10 +95,23 @@ def main():
     for d_val in d_values:
         d_field = np.full(config.geometry.n_segments, d_val)
         try:
+            # Get RVE properties for this d
+            kappa = rve_db.kappa_hot(np.array([d_val]))[0]
+            beta = rve_db.beta_hot(np.array([d_val]))[0]
+            eps = rve_db.eps_hot(np.array([d_val]))[0]
+            A_surf_V = rve_db.A_surf_V(np.array([d_val]))[0]
+            
             result = model.solve(d_field)
             Q = result.Q
             Q_values.append(Q)
-            print(f"  d={d_val:.1f} (uniform): Q={Q/1e6:.6f} MW, ΔP_hot={result.delta_P_hot/1e3:.2f} kPa")
+            
+            # Check enthalpy difference
+            h_diff = result.h_hot_in - result.h_hot_out if hasattr(result, 'h_hot_in') else 0.0
+            
+            print(f"  d={d_val:.1f} (uniform):")
+            print(f"    Q={Q/1e6:.6f} MW, ΔP_hot={result.delta_P_hot/1e3:.2f} kPa")
+            print(f"    κ={kappa:.2e} m², β={beta:.2e} 1/m, ε={eps:.3f}, A_surf/V={A_surf_V:.1f} 1/m")
+            print(f"    T_hot_out={result.T_hot[-1]:.2f} K, T_cold_out={result.T_cold[0]:.2f} K")
         except Exception as e:
             print(f"  d={d_val:.1f} (uniform): Solve failed: {e}")
             Q_values.append(None)

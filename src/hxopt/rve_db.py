@@ -58,7 +58,8 @@ class RVEDatabase:
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"RVE table not found: {csv_path}")
         
-        df = pd.read_csv(csv_path)
+        # Read CSV, skipping comment lines (starting with #)
+        df = pd.read_csv(csv_path, comment='#')
         
         # Validate required columns
         required = ['d', 'kappa_hot', 'beta_hot', 'eps_hot', 'lambda_solid']

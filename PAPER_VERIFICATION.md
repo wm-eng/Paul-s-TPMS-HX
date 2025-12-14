@@ -135,8 +135,14 @@ The paper demonstrates **28.7% average enhancement** over uniform lattice in exp
      * Fixed Armijo line search condition for maximization
      * Improved convergence check (relative tolerance)
      * Increased default step size for faster convergence
+     * Adaptive gradient computation with better diagnostics
      * See `docs/OPTIMIZATION_IMPROVEMENTS.md` for details
-   - **Note:** Achieving the paper's 28.7% improvement may still require:
+   - **⚠️ Known Issue:** Model currently shows zero sensitivity to d changes (Q identical for all d values)
+     * Root cause: Solver converging to same solution regardless of RVE properties
+     * See `docs/OPTIMIZATION_ZERO_GRADIENT_ISSUE.md` for detailed analysis
+     * Immediate fixes applied: reduced relaxation (0.3→0.15), tighter tolerance (1e-6→1e-7), more iterations (100→200)
+   - **Note:** Achieving the paper's 28.7% improvement requires:
+     * Model sensitivity to d changes (currently blocked - see issue above)
      * More optimization iterations (now default: 50)
      * Tuned constraint limits
      * Optimized initial guess

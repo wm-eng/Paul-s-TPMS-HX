@@ -116,9 +116,9 @@ class FluidConfig:
 @dataclass
 class SolverConfig:
     """Solver parameters."""
-    max_iter: int = 100
-    tol: float = 1e-6
-    relax: float = 0.3  # Relaxation factor for iterative solver (reduced for stability)
+    max_iter: int = 200  # Increased to allow more iterations for property sensitivity
+    tol: float = 1e-7  # Tighter tolerance to force more accurate convergence
+    relax: float = 0.15  # Reduced relaxation to allow properties to affect solution (was 0.3)
 
 
 @dataclass

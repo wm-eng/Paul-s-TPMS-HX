@@ -187,8 +187,9 @@ def main():
         
         T_hot_in=300.0,  # K
         T_cold_in=20.0,  # K
-        P_hot_in=2e5,    # Pa
-        P_cold_in=1e5,   # Pa
+        # Increased inlet pressures to avoid hitting minimum limit with calibrated RVE properties
+        P_hot_in=10e6,   # Pa (10 MPa, increased from 200 kPa)
+        P_cold_in=5e6,   # Pa (5 MPa, increased from 100 kPa)
         m_dot_hot=0.01,  # kg/s
         m_dot_cold=0.05, # kg/s
     )
@@ -212,7 +213,7 @@ def main():
         fluid=fluid,
         optimization=optimization,
         rve_table_path=os.path.join(
-            os.path.dirname(__file__), '..', 'data', 'rve_tables', 'primitive_default.csv'
+            os.path.dirname(__file__), '..', 'data', 'rve_tables', 'primitive_calibrated.csv'
         ),
         output_dir=os.path.join(os.path.dirname(__file__), '..', 'runs', 'paper_validation'),
     )
