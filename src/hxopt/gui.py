@@ -950,12 +950,12 @@ class TPMSOptimizerGUI:
         if self.config and self.config.geometry.use_2d and self.model:
             # Plot 2D flow paths
             if hasattr(self.model, 'hot_path') and self.model.hot_path is not None:
-                path = self.model.hot_path.path_coords
+                path = self.model.hot_path.coordinates  # Use 'coordinates' property, not 'path_coords'
                 if path is not None and len(path) > 0:
                     self.ax_2d.plot(path[:, 0], path[:, 1], 'r-', linewidth=2, label='Hot Path', marker='o', markersize=3)
             
             if hasattr(self.model, 'cold_path') and self.model.cold_path is not None:
-                path = self.model.cold_path.path_coords
+                path = self.model.cold_path.coordinates  # Use 'coordinates' property, not 'path_coords'
                 if path is not None and len(path) > 0:
                     self.ax_2d.plot(path[:, 0], path[:, 1], 'b-', linewidth=2, label='Cold Path', marker='s', markersize=3)
             

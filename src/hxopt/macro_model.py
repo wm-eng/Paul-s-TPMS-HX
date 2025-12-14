@@ -257,8 +257,8 @@ class MacroModel:
             
             # Energy balance: d(m_dot * h)/dx = Q_vol * A_cross
             # For constant m_dot: m_dot * dh/dx = Q_vol * A_cross
-            cp_hot = self.props_hot.specific_heat(T_hot[:-1], P_hot[:-1])
-            cp_cold = self.props_cold.specific_heat(T_cold[:-1], P_cold[:-1])
+            cp_hot = self.props_hot.specific_heat(T_hot_safe, P_hot_safe)
+            cp_cold = self.props_cold.specific_heat(T_cold_safe, P_cold_safe)
             
             # Clamp specific heats
             cp_hot = np.clip(cp_hot, 100.0, 1e6)  # J/(kg·K)
