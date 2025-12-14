@@ -384,6 +384,7 @@ class RealFluidProperties:
             'V': 'VIS',      # Viscosity
             'C': 'HEAT_CAPACITY_CP',  # Specific heat
             'L': 'THERMAL_CONDUCTIVITY',  # Thermal conductivity
+            'H': 'ENTHALPY',  # Enthalpy
         }
         
         # Standard REFPROP property codes
@@ -392,6 +393,7 @@ class RealFluidProperties:
             'V': 'V',  # Viscosity (Pa·s)
             'C': 'C',  # Specific heat (J/(kg·K))
             'L': 'L',  # Thermal conductivity (W/(m·K))
+            'H': 'H',  # Enthalpy (J/kg)
         }
         
         if prop == 'T_sat':
@@ -479,6 +481,9 @@ class RealFluidProperties:
                             return self.rp.get_property(self.fluid_refprop, PropertyType.HEAT_CAPACITY_CP.value, T, P)
                         elif prop == 'L':
                             return self.rp.get_property(self.fluid_refprop, PropertyType.THERMAL_CONDUCTIVITY.value, T, P)
+                        elif prop == 'H':
+                            # PropertyType.ENTHALPY.value is 'H', but REFPROP interface expects 'H' directly
+                            return self.rp.get_property(self.fluid_refprop, 'H', T, P)
                         raise
             
             # Try REFPROP_9 API (from HyFlux_Hx)
@@ -542,6 +547,9 @@ class RealFluidProperties:
             raise ValueError(f"Unknown property: {prop}")
         
         try:
+            # For enthalpy, use 'H' property code
+            if prop == 'H':
+                return CP.PropsSI('H', 'T', T, 'P', P, self.fluid_coolprop)
             return CP.PropsSI(prop_code, 'T', T, 'P', P, self.fluid_coolprop)
         except Exception as e:
             raise RuntimeError(f"COOLProp property lookup failed: {e}")
@@ -604,6 +612,13 @@ class RealFluidProperties:
     def thermal_conductivity(self, T, P):
         """Thermal conductivity. Units: W/(m·K)."""
         return self._get_property('L', T, P)
+    
+    def enthalpy(self, T, P):
+        """
+        Enthalpy. Units: J/kg.
+        Reference state depends on the property library (typically 0 K or 273.15 K).
+        """
+        return self._get_property('H', T, P)
     
     def saturation_temperature(self, P):
         """

@@ -358,6 +358,11 @@ class TPMSOptimizerGUI:
         notebook.add(self.tab_results, text="Results")
         self._create_results_display(self.tab_results)
         
+        # Tab 6: Fluid Property Charts
+        self.tab_properties = ttk.Frame(notebook)
+        notebook.add(self.tab_properties, text="Fluid Properties")
+        self._create_property_charts(self.tab_properties)
+        
     def _create_tpms_visualization(self, parent):
         """Create TPMS structure visualization."""
         fig = Figure(figsize=(8, 8), dpi=100)
@@ -1077,6 +1082,174 @@ Pressures:
                 messagebox.showinfo("Success", f"Results exported to {filename}")
             except Exception as e:
                 messagebox.showerror("Error", f"Export failed: {e}")
+    
+    def _create_property_charts(self, parent):
+        """Create fluid property charts tab."""
+        # Create figure with subplots
+        fig = Figure(figsize=(12, 10), dpi=100)
+        self.fig_props = fig
+        
+        # Create 2x2 subplot layout
+        # Top row: Constant pressure charts (T-h diagrams)
+        # Bottom row: Constant enthalpy charts (T-P diagrams)
+        self.ax_he_p = fig.add_subplot(2, 2, 1)  # Helium constant pressure
+        self.ax_h2_p = fig.add_subplot(2, 2, 2)  # Hydrogen constant pressure
+        self.ax_he_h = fig.add_subplot(2, 2, 3)  # Helium constant enthalpy
+        self.ax_h2_h = fig.add_subplot(2, 2, 4)  # Hydrogen constant enthalpy
+        
+        canvas = FigureCanvasTkAgg(fig, parent)
+        canvas.draw()
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        
+        toolbar = NavigationToolbar2Tk(canvas, parent)
+        toolbar.update()
+        
+        # Initial plot
+        self._update_property_charts()
+    
+    def _update_property_charts(self):
+        """Update fluid property charts."""
+        try:
+            from .materials import RealFluidProperties, HAS_REFPROP, HAS_COOLPROP
+            
+            # Check if we can use real properties
+            if not (HAS_REFPROP or HAS_COOLPROP):
+                for ax in [self.ax_he_p, self.ax_h2_p, self.ax_he_h, self.ax_h2_h]:
+                    ax.clear()
+                    ax.text(0.5, 0.5, 'REFPROP/COOLProp not available', 
+                           ha='center', va='center', transform=ax.transAxes)
+                self.fig_props.canvas.draw()
+                return
+            
+            # Initialize fluid property objects
+            try:
+                props_he = RealFluidProperties('helium', backend='auto')
+                props_h2 = RealFluidProperties('hydrogen', backend='auto')
+            except Exception as e:
+                for ax in [self.ax_he_p, self.ax_h2_p, self.ax_he_h, self.ax_h2_h]:
+                    ax.clear()
+                    ax.text(0.5, 0.5, f'Error initializing properties: {e}', 
+                           ha='center', va='center', transform=ax.transAxes)
+                self.fig_props.canvas.draw()
+                return
+            
+            # Plot constant pressure charts (T-h diagrams)
+            self._plot_constant_pressure_chart(props_he, self.ax_he_p, 'Helium')
+            self._plot_constant_pressure_chart(props_h2, self.ax_h2_p, 'Hydrogen')
+            
+            # Plot constant enthalpy charts (T-P diagrams)
+            self._plot_constant_enthalpy_chart(props_he, self.ax_he_h, 'Helium')
+            self._plot_constant_enthalpy_chart(props_h2, self.ax_h2_h, 'Hydrogen')
+            
+            self.fig_props.tight_layout()
+            self.fig_props.canvas.draw()
+            
+        except Exception as e:
+            import traceback
+            error_msg = f"Error updating property charts: {e}\n{traceback.format_exc()}"
+            for ax in [self.ax_he_p, self.ax_h2_p, self.ax_he_h, self.ax_h2_h]:
+                ax.clear()
+                ax.text(0.5, 0.5, error_msg, ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=8, wrap=True)
+            self.fig_props.canvas.draw()
+    
+    def _plot_constant_pressure_chart(self, props, ax, fluid_name):
+        """Plot constant pressure T-h diagram."""
+        ax.clear()
+        
+        # Define pressure levels (Pa)
+        if 'helium' in fluid_name.lower():
+            pressures = [1e5, 2e5, 5e5, 10e5]  # 1, 2, 5, 10 bar
+            T_range = np.linspace(2.2, 300, 100)  # Helium: 2.2K to 300K
+        else:  # Hydrogen
+            pressures = [1e5, 2e5, 5e5, 10e5]  # 1, 2, 5, 10 bar
+            T_range = np.linspace(14, 100, 100)  # Hydrogen: 14K to 100K
+        
+        colors = plt.cm.viridis(np.linspace(0, 1, len(pressures)))
+        
+        for P, color in zip(pressures, colors):
+            h_values = []
+            T_valid = []
+            
+            for T in T_range:
+                try:
+                    h = props.enthalpy(T, P)
+                    if np.isfinite(h) and h > -1e10:  # Valid value
+                        h_values.append(h / 1e3)  # Convert to kJ/kg
+                        T_valid.append(T)
+                except Exception:
+                    continue
+            
+            if len(h_values) > 0:
+                ax.plot(h_values, T_valid, '-', color=color, linewidth=2, 
+                       label=f'P = {P/1e5:.1f} bar')
+        
+        ax.set_xlabel('Enthalpy (kJ/kg)')
+        ax.set_ylabel('Temperature (K)')
+        ax.set_title(f'{fluid_name} - Constant Pressure (T-h)')
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3)
+    
+    def _plot_constant_enthalpy_chart(self, props, ax, fluid_name):
+        """Plot constant enthalpy T-P diagram."""
+        ax.clear()
+        
+        # Define enthalpy levels (J/kg)
+        if 'helium' in fluid_name.lower():
+            # Helium: typical range for cryogenic applications
+            h_levels = [10e3, 50e3, 100e3, 200e3, 500e3]  # 10, 50, 100, 200, 500 kJ/kg
+            T_range = np.linspace(2.2, 300, 100)
+            P_range = np.linspace(1e5, 10e5, 50)  # 1 to 10 bar
+        else:  # Hydrogen
+            # Hydrogen: typical range for liquid hydrogen
+            h_levels = [-200e3, -100e3, 0, 100e3, 200e3]  # Negative for liquid
+            T_range = np.linspace(14, 100, 100)
+            P_range = np.linspace(1e5, 10e5, 50)  # 1 to 10 bar
+        
+        colors = plt.cm.plasma(np.linspace(0, 1, len(h_levels)))
+        
+        for h_target, color in zip(h_levels, colors):
+            T_values = []
+            P_values = []
+            
+            # For each pressure, find temperature that gives target enthalpy
+            for P in P_range:
+                # Binary search for temperature
+                T_low = T_range[0]
+                T_high = T_range[-1]
+                tolerance = 0.1  # K
+                max_iter = 50
+                
+                for _ in range(max_iter):
+                    T_mid = (T_low + T_high) / 2
+                    try:
+                        h_mid = props.enthalpy(T_mid, P)
+                        if not np.isfinite(h_mid):
+                            break
+                        
+                        if abs(h_mid - h_target) < tolerance * 1e3:  # Tolerance in J/kg
+                            T_values.append(T_mid)
+                            P_values.append(P / 1e5)  # Convert to bar
+                            break
+                        elif h_mid < h_target:
+                            T_low = T_mid
+                        else:
+                            T_high = T_mid
+                    except Exception:
+                        break
+                    
+                    if (T_high - T_low) < tolerance:
+                        break
+            
+            if len(T_values) > 0:
+                ax.plot(P_values, T_values, '-', color=color, linewidth=2,
+                       label=f'h = {h_target/1e3:.0f} kJ/kg')
+        
+        ax.set_xlabel('Pressure (bar)')
+        ax.set_ylabel('Temperature (K)')
+        ax.set_title(f'{fluid_name} - Constant Enthalpy (T-P)')
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3)
 
 
 def main():
