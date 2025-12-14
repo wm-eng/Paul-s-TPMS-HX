@@ -8,6 +8,8 @@ from tkinter import ttk, filedialog, messagebox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import numpy as np
 import os
 import sys
@@ -331,26 +333,238 @@ class TPMSOptimizerGUI:
         notebook = ttk.Notebook(viz_frame)
         notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # Tab 1: 2D Model Visualization
+        # Tab 1: TPMS Structure Visualization
+        self.tab_tpms = ttk.Frame(notebook)
+        notebook.add(self.tab_tpms, text="TPMS Structure")
+        self._create_tpms_visualization(self.tab_tpms)
+        
+        # Tab 2: 2D Model Visualization
         self.tab_2d = ttk.Frame(notebook)
         notebook.add(self.tab_2d, text="2D Model")
         self._create_2d_plot(self.tab_2d)
         
-        # Tab 2: Temperature Profiles
+        # Tab 3: Temperature Profiles
         self.tab_temp = ttk.Frame(notebook)
         notebook.add(self.tab_temp, text="Temperature Profiles")
         self._create_temp_plot(self.tab_temp)
         
-        # Tab 3: Design Variable (d field)
+        # Tab 4: Design Variable (d field)
         self.tab_d = ttk.Frame(notebook)
         notebook.add(self.tab_d, text="Design Variable (d)")
         self._create_d_plot(self.tab_d)
         
-        # Tab 4: Results Summary
+        # Tab 5: Results Summary
         self.tab_results = ttk.Frame(notebook)
         notebook.add(self.tab_results, text="Results")
         self._create_results_display(self.tab_results)
         
+    def _create_tpms_visualization(self, parent):
+        """Create TPMS structure visualization."""
+        fig = Figure(figsize=(8, 8), dpi=100)
+        self.fig_tpms = fig
+        self.ax_tpms = fig.add_subplot(111, projection='3d')
+        self.ax_tpms.set_title("TPMS Structure Visualization")
+        
+        canvas = FigureCanvasTkAgg(fig, parent)
+        canvas.draw()
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        
+        toolbar = NavigationToolbar2Tk(canvas, parent)
+        toolbar.update()
+        
+        # Initial visualization
+        self._update_tpms_visualization()
+    
+    def _update_tpms_visualization(self):
+        """Update TPMS structure visualization based on current selection."""
+        self.ax_tpms.clear()
+        
+        tpms_type = self.current_tpms if hasattr(self, 'current_tpms') else "Primitive"
+        
+        if tpms_type == "Gyroid":
+            self._plot_gyroid()
+        elif tpms_type == "Primitive":
+            self._plot_primitive()
+        elif tpms_type == "Diamond":
+            self._plot_diamond()
+        elif tpms_type == "IWP":
+            self._plot_iwp()
+        elif tpms_type == "Neovius":
+            self._plot_neovius()
+        else:
+            self._plot_primitive()  # Default
+        
+        self.ax_tpms.set_xlabel("X")
+        self.ax_tpms.set_ylabel("Y")
+        self.ax_tpms.set_zlabel("Z")
+        self.ax_tpms.set_title(f"{tpms_type} TPMS Structure")
+        self.fig_tpms.tight_layout()
+        self.fig_tpms.canvas.draw()
+    
+    def _plot_gyroid(self):
+        """Plot Gyroid TPMS structure.
+        
+        The Gyroid is a triply periodic minimal surface defined by:
+        cos(x)*sin(y) + cos(y)*sin(z) + cos(z)*sin(x) = 0
+        """
+        # Create a finer grid for better visualization
+        n = 50
+        x = np.linspace(0, 2*np.pi, n)
+        y = np.linspace(0, 2*np.pi, n)
+        z = np.linspace(0, 2*np.pi, n)
+        X, Y, Z = np.meshgrid(x, y, z)
+        
+        # Gyroid level set function
+        F = np.cos(X) * np.sin(Y) + np.cos(Y) * np.sin(Z) + np.cos(Z) * np.sin(X)
+        
+        # Extract isosurface using contour plots at different z-slices
+        # This gives a better 3D representation
+        threshold = 0.0
+        n_slices = 8
+        
+        for i, z_val in enumerate(np.linspace(0, 2*np.pi, n_slices)):
+            z_idx = int(z_val / (2*np.pi) * (n - 1))
+            if z_idx < n:
+                # Get 2D slice
+                X_2d = X[:, :, z_idx]
+                Y_2d = Y[:, :, z_idx]
+                F_2d = F[:, :, z_idx]
+                
+                # Plot contour lines at this z-level
+                # Use different colors for positive and negative regions
+                try:
+                    contours = self.ax_tpms.contour(X_2d, Y_2d, F_2d, 
+                                                   levels=[threshold], 
+                                                   colors='cyan', 
+                                                   alpha=0.4 + 0.3 * (i % 2),
+                                                   linewidths=1.5,
+                                                   zdir='z', 
+                                                   offset=z_val)
+                except:
+                    # Fallback if contour fails
+                    pass
+        
+        # Add a more detailed surface representation using parametric form
+        # Gyroid parametric representation (simplified for visualization)
+        u = np.linspace(0, 2*np.pi, 40)
+        v = np.linspace(0, 2*np.pi, 40)
+        U, V = np.meshgrid(u, v)
+        
+        # Create multiple surface patches to show the periodic structure
+        # This is an approximation that captures the Gyroid's characteristic shape
+        for offset in [0, np.pi/2, np.pi, 3*np.pi/2]:
+            # Rotated and translated patches
+            X_patch = U + offset
+            Y_patch = V + offset
+            Z_patch = np.sin(U + offset) * np.cos(V) + np.cos(U) * np.sin(V + offset)
+            
+            # Only plot if within bounds
+            mask = (X_patch >= 0) & (X_patch <= 2*np.pi) & \
+                   (Y_patch >= 0) & (Y_patch <= 2*np.pi) & \
+                   (Z_patch >= 0) & (Z_patch <= 2*np.pi)
+            
+            if np.any(mask):
+                self.ax_tpms.plot_surface(X_patch, Y_patch, Z_patch, 
+                                         alpha=0.3, 
+                                         color='cyan', 
+                                         edgecolor='blue', 
+                                         linewidth=0.2,
+                                         antialiased=True)
+        
+        # Add wireframe for structure clarity
+        # Sample points on the isosurface
+        u_wire = np.linspace(0, 2*np.pi, 20)
+        v_wire = np.linspace(0, 2*np.pi, 20)
+        U_wire, V_wire = np.meshgrid(u_wire, v_wire)
+        
+        # Wireframe representation
+        X_wire = U_wire
+        Y_wire = V_wire
+        Z_wire = np.sin(U_wire) * np.cos(V_wire) + np.cos(U_wire) * np.sin(V_wire)
+        
+        self.ax_tpms.plot_wireframe(X_wire, Y_wire, Z_wire, 
+                                   alpha=0.5, 
+                                   color='blue', 
+                                   linewidth=0.5)
+        
+        self.ax_tpms.set_xlim(0, 2*np.pi)
+        self.ax_tpms.set_ylim(0, 2*np.pi)
+        self.ax_tpms.set_zlim(0, 2*np.pi)
+        
+        # Set equal aspect ratio for better visualization
+        self.ax_tpms.set_box_aspect([1, 1, 1])
+    
+    def _plot_primitive(self):
+        """Plot Primitive TPMS structure."""
+        # Primitive: cos(x) + cos(y) + cos(z) = 0
+        u = np.linspace(0, 2*np.pi, 30)
+        v = np.linspace(0, 2*np.pi, 30)
+        U, V = np.meshgrid(u, v)
+        
+        # Simplified representation
+        X = U
+        Y = V
+        Z = np.cos(U) + np.cos(V)
+        
+        self.ax_tpms.plot_surface(X, Y, Z, alpha=0.7, color='orange', 
+                                  edgecolor='red', linewidth=0.1)
+        self.ax_tpms.set_xlim(0, 2*np.pi)
+        self.ax_tpms.set_ylim(0, 2*np.pi)
+        self.ax_tpms.set_zlim(-2, 2)
+    
+    def _plot_diamond(self):
+        """Plot Diamond TPMS structure."""
+        # Diamond: sin(x)*sin(y)*sin(z) + sin(x)*cos(y)*cos(z) + 
+        #          cos(x)*sin(y)*cos(z) + cos(x)*cos(y)*sin(z) = 0
+        u = np.linspace(0, 2*np.pi, 30)
+        v = np.linspace(0, 2*np.pi, 30)
+        U, V = np.meshgrid(u, v)
+        
+        X = U
+        Y = V
+        Z = np.sin(U) * np.sin(V) + np.cos(U) * np.cos(V)
+        
+        self.ax_tpms.plot_surface(X, Y, Z, alpha=0.7, color='green', 
+                                  edgecolor='darkgreen', linewidth=0.1)
+        self.ax_tpms.set_xlim(0, 2*np.pi)
+        self.ax_tpms.set_ylim(0, 2*np.pi)
+        self.ax_tpms.set_zlim(-2, 2)
+    
+    def _plot_iwp(self):
+        """Plot IWP (I-graph and Wrapped Package) TPMS structure."""
+        # IWP: 2*(cos(x)*cos(y) + cos(y)*cos(z) + cos(z)*cos(x)) - 
+        #      (cos(2*x) + cos(2*y) + cos(2*z)) = 0
+        u = np.linspace(0, 2*np.pi, 30)
+        v = np.linspace(0, 2*np.pi, 30)
+        U, V = np.meshgrid(u, v)
+        
+        X = U
+        Y = V
+        Z = 2 * (np.cos(U) * np.cos(V)) - (np.cos(2*U) + np.cos(2*V))
+        
+        self.ax_tpms.plot_surface(X, Y, Z, alpha=0.7, color='purple', 
+                                  edgecolor='darkviolet', linewidth=0.1)
+        self.ax_tpms.set_xlim(0, 2*np.pi)
+        self.ax_tpms.set_ylim(0, 2*np.pi)
+        self.ax_tpms.set_zlim(-4, 4)
+    
+    def _plot_neovius(self):
+        """Plot Neovius TPMS structure."""
+        # Neovius: 3*(cos(x) + cos(y) + cos(z)) + 4*cos(x)*cos(y)*cos(z) = 0
+        u = np.linspace(0, 2*np.pi, 30)
+        v = np.linspace(0, 2*np.pi, 30)
+        U, V = np.meshgrid(u, v)
+        
+        X = U
+        Y = V
+        Z = 3 * (np.cos(U) + np.cos(V)) + 4 * np.cos(U) * np.cos(V)
+        
+        self.ax_tpms.plot_surface(X, Y, Z, alpha=0.7, color='red', 
+                                  edgecolor='darkred', linewidth=0.1)
+        self.ax_tpms.set_xlim(0, 2*np.pi)
+        self.ax_tpms.set_ylim(0, 2*np.pi)
+        self.ax_tpms.set_zlim(-8, 8)
+    
     def _create_2d_plot(self, parent):
         """Create 2D model visualization."""
         fig = Figure(figsize=(8, 6), dpi=100)
@@ -516,6 +730,9 @@ class TPMSOptimizerGUI:
         default_path = f"data/rve_tables/{self.current_tpms.lower()}_default.csv"
         self.rve_path_var.set(default_path)
         self._load_rve_db()
+        # Update TPMS visualization
+        if hasattr(self, 'ax_tpms'):
+            self._update_tpms_visualization()
     
     def _toggle_2d(self):
         """Toggle 2D flow path mode."""
