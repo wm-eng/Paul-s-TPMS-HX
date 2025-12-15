@@ -225,3 +225,4 @@ def compare_with_original_conditions():
 if __name__ == "__main__":
     test_property_limited_conditions()
     compare_with_original_conditions()
+

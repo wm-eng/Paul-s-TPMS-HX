@@ -15,6 +15,7 @@ import os
 import sys
 from typing import Optional, Dict, Any
 import threading
+import gc
 
 # Import hxopt modules
 from .config import Config, GeometryConfig, FluidConfig, OptimizationConfig
@@ -40,6 +41,9 @@ class TPMSOptimizerGUI:
         self.current_result: Optional[MacroModelResult] = None
         self.opt_result = None
         self.d_field: Optional[np.ndarray] = None
+        
+        # Store canvas references for cleanup
+        self.canvases = []
         
         # TPMS structure options
         self.tpms_types = ["Primitive", "Gyroid", "Diamond", "IWP", "Neovius"]
@@ -132,7 +136,12 @@ class TPMSOptimizerGUI:
         ttk.Separator(button_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
         
         ttk.Button(button_frame, text="Load Config", command=self._load_config).pack(pady=3, fill=tk.X)
-        ttk.Button(button_frame, text="Export Results", command=self._export_results).pack(pady=3, fill=tk.X)
+        
+        # Export buttons
+        export_frame = ttk.LabelFrame(button_frame, text="Export", padding="5")
+        export_frame.pack(pady=3, fill=tk.X)
+        ttk.Button(export_frame, text="Export Results (CSV/VTK)", command=self._export_results).pack(pady=2, fill=tk.X)
+        ttk.Button(export_frame, text="Export STL", command=self._export_stl).pack(pady=2, fill=tk.X)
         
         # Status
         self.status_var = tk.StringVar(value="Ready")
@@ -287,40 +296,6 @@ class TPMSOptimizerGUI:
             self.opt_vars[key] = var
             ttk.Entry(opt_frame, textvariable=var, width=15).grid(row=i, column=1, sticky=tk.W, pady=2)
         
-        # Action Buttons - Make them more prominent and visible at top
-        button_frame = ttk.LabelFrame(control_frame, text="Actions", padding="10")
-        button_frame.grid(row=0, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
-        
-        # Primary START button - most prominent
-        start_button = tk.Button(button_frame, text="▶ START", 
-                                command=self._solve, 
-                                bg="#4CAF50", fg="white",
-                                font=("Arial", 14, "bold"),
-                                relief=tk.RAISED, bd=3,
-                                cursor="hand2",
-                                padx=20, pady=15)
-        start_button.pack(pady=10, fill=tk.X)
-        
-        # Secondary action buttons
-        self.solve_button = ttk.Button(button_frame, text="Run Simulation", 
-                                       command=self._solve, width=25)
-        self.solve_button.pack(pady=5, fill=tk.X)
-        
-        self.optimize_button = ttk.Button(button_frame, text="⚡ Optimize", 
-                                         command=self._optimize, width=25)
-        self.optimize_button.pack(pady=5, fill=tk.X)
-        
-        # Secondary buttons
-        ttk.Separator(button_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
-        
-        ttk.Button(button_frame, text="Load Config", command=self._load_config).pack(pady=3, fill=tk.X)
-        ttk.Button(button_frame, text="Export Results", command=self._export_results).pack(pady=3, fill=tk.X)
-        
-        # Status
-        self.status_var = tk.StringVar(value="Ready")
-        status_label = ttk.Label(button_frame, textvariable=self.status_var, foreground="blue")
-        status_label.pack(pady=5)
-        
     def _create_visualization_panel(self, parent):
         """Create visualization panel with plots."""
         viz_frame = ttk.Frame(parent)
@@ -371,6 +346,7 @@ class TPMSOptimizerGUI:
         self.ax_tpms.set_title("TPMS Structure Visualization")
         
         canvas = FigureCanvasTkAgg(fig, parent)
+        self.canvases.append(canvas)  # Store for cleanup
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         
@@ -382,7 +358,10 @@ class TPMSOptimizerGUI:
     
     def _update_tpms_visualization(self):
         """Update TPMS structure visualization based on current selection."""
+        # Clear all artists to free memory
         self.ax_tpms.clear()
+        # Force garbage collection of cleared artists
+        gc.collect()
         
         tpms_type = self.current_tpms if hasattr(self, 'current_tpms') else "Primitive"
         
@@ -412,8 +391,8 @@ class TPMSOptimizerGUI:
         The Gyroid is a triply periodic minimal surface defined by:
         cos(x)*sin(y) + cos(y)*sin(z) + cos(z)*sin(x) = 0
         """
-        # Create a finer grid for better visualization
-        n = 50
+        # Reduced grid size to prevent memory issues (was 50, now 25)
+        n = 25
         x = np.linspace(0, 2*np.pi, n)
         y = np.linspace(0, 2*np.pi, n)
         z = np.linspace(0, 2*np.pi, n)
@@ -421,6 +400,9 @@ class TPMSOptimizerGUI:
         
         # Gyroid level set function
         F = np.cos(X) * np.sin(Y) + np.cos(Y) * np.sin(Z) + np.cos(Z) * np.sin(X)
+        
+        # Clean up intermediate arrays immediately
+        del x, y, z
         
         # Extract isosurface using contour plots at different z-slices
         # This gives a better 3D representation
@@ -498,6 +480,10 @@ class TPMSOptimizerGUI:
         
         # Set equal aspect ratio for better visualization
         self.ax_tpms.set_box_aspect([1, 1, 1])
+        
+        # Clean up large arrays
+        del X, Y, Z, F, X_2d, Y_2d, F_2d, U, V, X_patch, Y_patch, Z_patch, U_wire, V_wire, X_wire, Y_wire, Z_wire
+        gc.collect()
     
     def _plot_primitive(self):
         """Plot Primitive TPMS structure."""
@@ -581,6 +567,7 @@ class TPMSOptimizerGUI:
         self.ax_2d.grid(True, alpha=0.3)
         
         canvas = FigureCanvasTkAgg(fig, parent)
+        self.canvases.append(canvas)  # Store for cleanup
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         
@@ -598,6 +585,7 @@ class TPMSOptimizerGUI:
         self.ax_temp.grid(True, alpha=0.3)
         
         canvas = FigureCanvasTkAgg(fig, parent)
+        self.canvases.append(canvas)  # Store for cleanup
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         
@@ -615,6 +603,7 @@ class TPMSOptimizerGUI:
         self.ax_d.grid(True, alpha=0.3)
         
         canvas = FigureCanvasTkAgg(fig, parent)
+        self.canvases.append(canvas)  # Store for cleanup
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         
@@ -694,10 +683,28 @@ class TPMSOptimizerGUI:
         """Load RVE database."""
         try:
             rve_path = self.rve_path_var.get()
-            if not os.path.exists(rve_path):
-                # Try relative to project root
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-                rve_path = os.path.join(project_root, rve_path)
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            full_path = os.path.join(project_root, rve_path) if not os.path.isabs(rve_path) else rve_path
+            
+            # Check if file exists, try fallback if not
+            if not os.path.exists(full_path):
+                # Try relative path first
+                if not os.path.exists(rve_path):
+                    # Fall back to primitive_default.csv
+                    fallback_path = os.path.join(project_root, "data/rve_tables/primitive_default.csv")
+                    if os.path.exists(fallback_path):
+                        rve_path = "data/rve_tables/primitive_default.csv"
+                        self.rve_path_var.set(rve_path)
+                        full_path = fallback_path
+                    else:
+                        raise FileNotFoundError(f"RVE table not found: {rve_path} and fallback not available")
+                else:
+                    full_path = rve_path
+            else:
+                # Use the full path
+                if not os.path.isabs(rve_path):
+                    # Update to use relative path for display
+                    pass
             
             # Get metal selection
             metal_name = self.metal_var.get() if hasattr(self, 'metal_var') else None
@@ -705,8 +712,8 @@ class TPMSOptimizerGUI:
             # Get cell size from config if available
             cell_size = getattr(self.config, 'rve_cell_size', None) if self.config else None
             
-            self.rve_db = RVEDatabase(rve_path, cell_size=cell_size, metal_name=metal_name)
-            status_msg = f"RVE database loaded: {os.path.basename(rve_path)}"
+            self.rve_db = RVEDatabase(full_path, cell_size=cell_size, metal_name=metal_name)
+            status_msg = f"RVE database loaded: {os.path.basename(full_path)}"
             if metal_name:
                 status_msg += f" | Metal: {metal_name}"
             self.status_var.set(status_msg)
@@ -714,6 +721,26 @@ class TPMSOptimizerGUI:
             # Update metal info display
             if hasattr(self, 'metal_var'):
                 self._update_metal_info()
+        except FileNotFoundError as e:
+            # Try to use primitive as fallback
+            try:
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                fallback_path = os.path.join(project_root, "data/rve_tables/primitive_default.csv")
+                if os.path.exists(fallback_path):
+                    metal_name = self.metal_var.get() if hasattr(self, 'metal_var') else None
+                    cell_size = getattr(self.config, 'rve_cell_size', None) if self.config else None
+                    self.rve_db = RVEDatabase(fallback_path, cell_size=cell_size, metal_name=metal_name)
+                    self.rve_path_var.set("data/rve_tables/primitive_default.csv")
+                    self.status_var.set(f"RVE database loaded (fallback): primitive_default.csv")
+                    messagebox.showwarning(
+                        "RVE Table Not Found",
+                        f"RVE table not found: {os.path.basename(str(e))}\n"
+                        f"Using Primitive RVE properties as fallback."
+                    )
+                else:
+                    raise
+            except Exception:
+                messagebox.showerror("Error", f"Failed to load RVE database: {e}\n\nNo fallback available.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load RVE database: {e}")
             # Don't raise - gracefully handle error to prevent GUI crash
@@ -733,7 +760,28 @@ class TPMSOptimizerGUI:
         self.current_tpms = self.tpms_var.get()
         # Update RVE path based on TPMS type
         default_path = f"data/rve_tables/{self.current_tpms.lower()}_default.csv"
-        self.rve_path_var.set(default_path)
+        
+        # Check if file exists, fall back to primitive if not
+        if not os.path.exists(default_path):
+            # Try relative to project root
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            full_path = os.path.join(project_root, default_path)
+            if not os.path.exists(full_path):
+                # Fall back to primitive_default.csv for missing TPMS types
+                fallback_path = "data/rve_tables/primitive_default.csv"
+                self.rve_path_var.set(fallback_path)
+                messagebox.showinfo(
+                    "RVE Table Not Found",
+                    f"RVE table for {self.current_tpms} not found.\n"
+                    f"Using Primitive RVE properties as fallback.\n\n"
+                    f"To use {self.current_tpms}-specific properties, create:\n"
+                    f"{default_path}"
+                )
+            else:
+                self.rve_path_var.set(default_path)
+        else:
+            self.rve_path_var.set(default_path)
+        
         self._load_rve_db()
         # Update TPMS visualization
         if hasattr(self, 'ax_tpms'):
@@ -947,10 +995,14 @@ class TPMSOptimizerGUI:
         
         # Results
         self._update_results_display()
+        
+        # Force garbage collection after updates
+        gc.collect()
     
     def _update_2d_plot(self):
         """Update 2D model visualization."""
         self.ax_2d.clear()
+        gc.collect()  # Clean up cleared artists
         
         if self.config and self.config.geometry.use_2d and self.model:
             # Plot 2D flow paths
@@ -984,6 +1036,7 @@ class TPMSOptimizerGUI:
     def _update_temp_plot(self):
         """Update temperature profile plot."""
         self.ax_temp.clear()
+        gc.collect()  # Clean up cleared artists
         
         if self.current_result:
             x = self.current_result.x
@@ -1003,6 +1056,7 @@ class TPMSOptimizerGUI:
     def _update_d_plot(self):
         """Update design variable plot."""
         self.ax_d.clear()
+        gc.collect()  # Clean up cleared artists
         
         if self.d_field is not None and self.config:
             x = np.linspace(0, self.config.geometry.length, len(self.d_field))
@@ -1019,41 +1073,119 @@ class TPMSOptimizerGUI:
         self.fig_d.tight_layout()
         self.fig_d.canvas.draw()
     
+    def _format_number(self, value, unit="", use_scientific=True, max_decimals=3):
+        """
+        Format number with appropriate precision and scientific notation.
+        
+        Parameters:
+        -----------
+        value : float
+            Number to format
+        unit : str
+            Unit string to append
+        use_scientific : bool
+            Use scientific notation for very large/small numbers
+        max_decimals : int
+            Maximum decimal places
+        """
+        import numpy as np
+        
+        # Check for unphysical values (NaN, Inf, or extremely large)
+        if not np.isfinite(value) or abs(value) > 1e50:
+            return f"ERROR (unphysical value){' ' + unit if unit else ''}"
+        
+        # Use scientific notation for very large or very small numbers
+        if use_scientific and (abs(value) > 1e6 or (abs(value) < 1e-3 and value != 0)):
+            return f"{value:.{max_decimals}e} {unit}".strip()
+        
+        # Format with appropriate decimal places
+        if abs(value) >= 1000:
+            return f"{value:.{max_decimals-1}f} {unit}".strip()
+        elif abs(value) >= 1:
+            return f"{value:.{max_decimals}f} {unit}".strip()
+        else:
+            return f"{value:.{max_decimals+1}f} {unit}".strip()
+    
     def _update_results_display(self):
         """Update results summary display."""
         self.results_text.delete(1.0, tk.END)
         
         if self.current_result:
             result = self.current_result
+            
+            # Format heat transfer
+            Q_mw = result.Q / 1e6
+            Q_str = self._format_number(Q_mw, "MW", use_scientific=abs(Q_mw) > 1e6 or abs(Q_mw) < 1e-3)
+            
+            # Format pressure drops
+            dP_hot_kpa = result.delta_P_hot / 1e3
+            dP_cold_kpa = result.delta_P_cold / 1e3
+            dP_hot_str = self._format_number(dP_hot_kpa, "kPa", use_scientific=abs(dP_hot_kpa) > 1e6)
+            dP_cold_str = self._format_number(dP_cold_kpa, "kPa", use_scientific=abs(dP_cold_kpa) > 1e6)
+            
+            # Format temperatures
+            T_hot_in = result.T_hot[0]
+            T_hot_out = result.T_hot[-1]
+            T_cold_in = result.T_cold[-1]
+            T_cold_out = result.T_cold[0]
+            
+            T_hot_in_str = self._format_number(T_hot_in, "K", use_scientific=False, max_decimals=1)
+            T_hot_out_str = self._format_number(T_hot_out, "K", use_scientific=abs(T_hot_out) > 1e6 or abs(T_hot_out) < 1e-3)
+            T_cold_in_str = self._format_number(T_cold_in, "K", use_scientific=abs(T_cold_in) > 1e6 or abs(T_cold_in) < 1e-3)
+            T_cold_out_str = self._format_number(T_cold_out, "K", use_scientific=False, max_decimals=1)
+            
+            # Format pressures
+            P_hot_in_bar = result.P_hot[0] / 1e5
+            P_hot_out_bar = result.P_hot[-1] / 1e5
+            P_cold_in_bar = result.P_cold[-1] / 1e5
+            P_cold_out_bar = result.P_cold[0] / 1e5
+            
+            P_hot_in_str = self._format_number(P_hot_in_bar, "bar", use_scientific=False, max_decimals=2)
+            P_hot_out_str = self._format_number(P_hot_out_bar, "bar", use_scientific=abs(P_hot_out_bar) > 1e6)
+            P_cold_in_str = self._format_number(P_cold_in_bar, "bar", use_scientific=abs(P_cold_in_bar) > 1e6)
+            P_cold_out_str = self._format_number(P_cold_out_bar, "bar", use_scientific=False, max_decimals=2)
+            
             text = f"""RESULTS SUMMARY
 {'='*60}
 
 Heat Transfer:
-  Q = {result.Q/1e6:.3f} MW
+  Q = {Q_str}
 
 Pressure Drops:
-  ΔP_hot = {result.delta_P_hot/1e3:.2f} kPa
-  ΔP_cold = {result.delta_P_cold/1e3:.2f} kPa
+  ΔP_hot = {dP_hot_str}
+  ΔP_cold = {dP_cold_str}
 
 Temperatures:
-  T_hot_in = {result.T_hot[0]:.2f} K
-  T_hot_out = {result.T_hot[-1]:.2f} K
-  T_cold_in = {result.T_cold[-1]:.2f} K
-  T_cold_out = {result.T_cold[0]:.2f} K
+  T_hot_in = {T_hot_in_str}
+  T_hot_out = {T_hot_out_str}
+  T_cold_in = {T_cold_in_str}
+  T_cold_out = {T_cold_out_str}
 
 Pressures:
-  P_hot_in = {result.P_hot[0]/1e5:.2f} bar
-  P_hot_out = {result.P_hot[-1]/1e5:.2f} bar
-  P_cold_in = {result.P_cold[-1]/1e5:.2f} bar
-  P_cold_out = {result.P_cold[0]/1e5:.2f} bar
+  P_hot_in = {P_hot_in_str}
+  P_hot_out = {P_hot_out_str}
+  P_cold_in = {P_cold_in_str}
+  P_cold_out = {P_cold_out_str}
 
 """
             
             if self.opt_result:
+                final_Q = self.opt_result.Q_values[-1] / 1e6
+                initial_Q = self.opt_result.Q_values[0] / 1e6
+                
+                # Calculate improvement safely
+                if abs(initial_Q) > 1e-9:
+                    improvement = ((final_Q - initial_Q) / abs(initial_Q)) * 100
+                    improvement_str = self._format_number(improvement, "%", use_scientific=False, max_decimals=1)
+                else:
+                    improvement_str = "N/A"
+                
+                final_Q_str = self._format_number(final_Q, "MW", use_scientific=abs(final_Q) > 1e6 or abs(final_Q) < 1e-3)
+                
                 text += f"""Optimization:
   Iterations: {len(self.opt_result.d_fields)}
-  Final Q: {self.opt_result.Q_values[-1]/1e6:.3f} MW
-  Improvement: {((self.opt_result.Q_values[-1] - self.opt_result.Q_values[0])/self.opt_result.Q_values[0]*100):.1f}%
+  Final Q: {final_Q_str}
+  Improvement: {improvement_str}
 """
             
             self.results_text.insert(1.0, text)
@@ -1067,7 +1199,12 @@ Pressures:
         filename = filedialog.asksaveasfilename(
             title="Export Results",
             defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("VTK files", "*.vtk"), ("All files", "*.*")]
+            filetypes=[
+                ("CSV files", "*.csv"),
+                ("VTK files", "*.vtk"),
+                ("STL files", "*.stl"),
+                ("All files", "*.*")
+            ]
         )
         
         if filename:
@@ -1078,10 +1215,148 @@ Pressures:
                     export_field_csv(self.current_result, self.d_field, self.config, filename=filename)
                 elif filename.endswith('.vtk'):
                     export_vtk(self.current_result, self.d_field, self.config, filename=filename)
+                elif filename.endswith('.stl'):
+                    # Export TPMS geometry as STL using memory-safe method
+                    # Call _export_stl with the filename already chosen
+                    self._export_stl_with_filename(filename)
+                    return
+                else:
+                    messagebox.showwarning("Warning", "Unsupported file format")
                 
-                messagebox.showinfo("Success", f"Results exported to {filename}")
+                if not filename.endswith('.stl'):
+                    messagebox.showinfo("Success", f"Results exported to {filename}")
             except Exception as e:
                 messagebox.showerror("Error", f"Export failed: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    def _export_stl(self, filename=None):
+        """Export TPMS geometry as STL file.
+        
+        Parameters:
+        -----------
+        filename : str, optional
+            Output filename. If None, shows file dialog.
+        """
+        if not self.current_result or self.d_field is None:
+            messagebox.showwarning(
+                "Warning",
+                "No results to export. Run solve or optimize first."
+            )
+            return
+        
+        if filename is None:
+            filename = filedialog.asksaveasfilename(
+                title="Export STL",
+                defaultextension=".stl",
+                filetypes=[("STL files", "*.stl"), ("All files", "*.*")]
+            )
+        
+        if filename:
+            # Run STL export in background thread to prevent UI blocking and memory issues
+            def export_stl_thread():
+                try:
+                    from .export_geometry import export_tpms_stl_from_optimization
+                    from .tpms_library import TPMSType, VariantMode
+                    
+                    # Get TPMS type from current selection
+                    tpms_type_map = {
+                        "Primitive": TPMSType.PRIMITIVE,
+                        "Gyroid": TPMSType.GYROID,
+                        "Diamond": TPMSType.DIAMOND,
+                        "IWP": TPMSType.IWP,
+                        "Neovius": TPMSType.NEOVIUS,
+                    }
+                    tpms_type = tpms_type_map.get(self.current_tpms, TPMSType.PRIMITIVE)
+                    
+                    # Update status
+                    self.root.after(0, lambda: self.status_var.set("Generating STL (this may take a while)..."))
+                    
+                    # Calculate safe resolution based on geometry to prevent memory issues
+                    # Limit total grid points to ~50 million to prevent memory exhaustion
+                    L = self.config.geometry.length
+                    W = self.config.geometry.width
+                    H = self.config.geometry.height
+                    cell_size = 0.001
+                    
+                    # Calculate max safe resolution
+                    max_total_points = 50_000_000  # 50M points max
+                    base_resolution = 30  # Reduced from 50
+                    
+                    # Calculate grid dimensions
+                    n_x = int(L / cell_size * base_resolution)
+                    n_y = int(W / cell_size * base_resolution)
+                    n_z = int(H / cell_size * base_resolution)
+                    total_points = n_x * n_y * n_z
+                    
+                    # Reduce resolution if too large
+                    if total_points > max_total_points:
+                        scale_factor = (max_total_points / total_points) ** (1/3)
+                        base_resolution = int(base_resolution * scale_factor)
+                        self.root.after(0, lambda: self.status_var.set(
+                            f"Generating STL (reduced resolution: {base_resolution} to prevent memory issues)..."
+                        ))
+                    
+                    # Force garbage collection before starting
+                    gc.collect()
+                    
+                    export_tpms_stl_from_optimization(
+                        result=self.current_result,
+                        d_field=self.d_field,
+                        config=self.config,
+                        filename=os.path.basename(filename),
+                        tpms_type=tpms_type,
+                        variant=VariantMode.SINGLE,
+                        cell_size=cell_size,
+                        resolution=base_resolution  # Use calculated safe resolution
+                    )
+                    
+                    # Move file to user's chosen location
+                    if os.path.exists(os.path.join(self.config.output_dir, os.path.basename(filename))):
+                        import shutil
+                        shutil.move(
+                            os.path.join(self.config.output_dir, os.path.basename(filename)),
+                            filename
+                        )
+                    
+                    # Force cleanup after export
+                    gc.collect()
+                    
+                    self.root.after(0, lambda: self.status_var.set("STL export complete ✓"))
+                    self.root.after(0, lambda: messagebox.showinfo("Success", f"STL exported to {filename}"))
+                    
+                except ImportError as e:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Error",
+                        f"STL export requires additional packages.\n"
+                        f"Install with: pip install numpy-stl scikit-image\n\n"
+                        f"Error: {e}"
+                    ))
+                    self.root.after(0, lambda: self.status_var.set("STL export failed ✗"))
+                except MemoryError as e:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Memory Error",
+                        f"STL generation requires too much memory.\n"
+                        f"Try reducing geometry size or resolution.\n\n"
+                        f"Error: {e}"
+                    ))
+                    self.root.after(0, lambda: self.status_var.set("STL export failed (memory) ✗"))
+                    gc.collect()
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror("Error", f"STL export failed: {e}"))
+                    self.root.after(0, lambda: self.status_var.set("STL export failed ✗"))
+                    import traceback
+                    traceback.print_exc()
+                    gc.collect()
+            
+            # Start export in background thread
+            thread = threading.Thread(target=export_stl_thread)
+            thread.daemon = True
+            thread.start()
+    
+    def _export_stl_with_filename(self, filename):
+        """Helper to call _export_stl with a pre-selected filename."""
+        self._export_stl(filename=filename)
     
     def _create_property_charts(self, parent):
         """Create fluid property charts tab."""
@@ -1098,6 +1373,7 @@ Pressures:
         self.ax_h2_h = fig.add_subplot(2, 2, 4)  # Hydrogen constant enthalpy
         
         canvas = FigureCanvasTkAgg(fig, parent)
+        self.canvases.append(canvas)  # Store for cleanup
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         
@@ -1156,6 +1432,7 @@ Pressures:
     def _plot_constant_pressure_chart(self, props, ax, fluid_name):
         """Plot constant pressure T-h diagram."""
         ax.clear()
+        gc.collect()  # Clean up cleared artists
         
         # Define pressure levels (Pa)
         if 'helium' in fluid_name.lower():
@@ -1183,6 +1460,12 @@ Pressures:
             if len(h_values) > 0:
                 ax.plot(h_values, T_valid, '-', color=color, linewidth=2, 
                        label=f'P = {P/1e5:.1f} bar')
+            # Clean up intermediate arrays
+            del h_values, T_valid
+        
+        # Clean up loop variables
+        del T_range, pressures, colors
+        gc.collect()
         
         ax.set_xlabel('Enthalpy (kJ/kg)')
         ax.set_ylabel('Temperature (K)')
@@ -1193,18 +1476,36 @@ Pressures:
     def _plot_constant_enthalpy_chart(self, props, ax, fluid_name):
         """Plot constant enthalpy T-P diagram."""
         ax.clear()
+        gc.collect()  # Clean up cleared artists
         
         # Define enthalpy levels (J/kg)
+        # First, sample actual enthalpy values at reference conditions to get realistic ranges
         if 'helium' in fluid_name.lower():
-            # Helium: typical range for cryogenic applications
-            h_levels = [10e3, 50e3, 100e3, 200e3, 500e3]  # 10, 50, 100, 200, 500 kJ/kg
-            T_range = np.linspace(2.2, 300, 100)
-            P_range = np.linspace(1e5, 10e5, 50)  # 1 to 10 bar
+            # Helium: sample at a reference point to get realistic enthalpy range
+            T_ref = 50.0  # K
+            P_ref = 2e5  # 2 bar
+            try:
+                h_ref = props.enthalpy(T_ref, P_ref)
+                # Use enthalpy levels around the reference, spanning typical cryogenic range
+                h_levels = [h_ref - 20e3, h_ref - 10e3, h_ref, h_ref + 10e3, h_ref + 20e3]
+            except:
+                # Fallback: typical helium enthalpies at cryogenic temps (0-10 kJ/kg)
+                h_levels = [0, 2e3, 5e3, 8e3, 10e3]  # 0, 2, 5, 8, 10 kJ/kg
+            T_range = np.linspace(2.2, 300, 100)  # Reduced resolution to save memory
+            P_range = np.linspace(1e5, 10e5, 30)  # Reduced from 50 to 30
         else:  # Hydrogen
-            # Hydrogen: typical range for liquid hydrogen
-            h_levels = [-200e3, -100e3, 0, 100e3, 200e3]  # Negative for liquid
-            T_range = np.linspace(14, 100, 100)
-            P_range = np.linspace(1e5, 10e5, 50)  # 1 to 10 bar
+            # Hydrogen: sample at liquid hydrogen conditions
+            T_ref = 20.0  # K (liquid hydrogen)
+            P_ref = 2e5  # 2 bar
+            try:
+                h_ref = props.enthalpy(T_ref, P_ref)
+                # Use enthalpy levels around the reference (typically negative for liquid)
+                h_levels = [h_ref - 50e3, h_ref - 25e3, h_ref, h_ref + 25e3, h_ref + 50e3]
+            except:
+                # Fallback: typical liquid hydrogen enthalpies
+                h_levels = [-200e3, -100e3, 0, 100e3, 200e3]  # Negative for liquid
+            T_range = np.linspace(14, 100, 100)  # Reduced resolution to save memory
+            P_range = np.linspace(1e5, 10e5, 30)  # Reduced from 50 to 30
         
         colors = plt.cm.plasma(np.linspace(0, 1, len(h_levels)))
         
@@ -1217,8 +1518,20 @@ Pressures:
                 # Binary search for temperature
                 T_low = T_range[0]
                 T_high = T_range[-1]
-                tolerance = 0.1  # K
-                max_iter = 50
+                tolerance = 0.5  # K (relaxed for better convergence)
+                max_iter = 100  # Increased iterations
+                
+                # Check if target enthalpy is achievable at this pressure
+                # by checking bounds
+                try:
+                    h_low = props.enthalpy(T_low, P)
+                    h_high = props.enthalpy(T_high, P)
+                    
+                    # If target is outside range, skip this pressure
+                    if not (min(h_low, h_high) <= h_target <= max(h_low, h_high)):
+                        continue
+                except:
+                    continue
                 
                 for _ in range(max_iter):
                     T_mid = (T_low + T_high) / 2
@@ -1227,7 +1540,8 @@ Pressures:
                         if not np.isfinite(h_mid):
                             break
                         
-                        if abs(h_mid - h_target) < tolerance * 1e3:  # Tolerance in J/kg
+                        # Tolerance in J/kg (1000 J/kg = 1 kJ/kg)
+                        if abs(h_mid - h_target) < tolerance * 1e3:
                             T_values.append(T_mid)
                             P_values.append(P / 1e5)  # Convert to bar
                             break
@@ -1239,24 +1553,61 @@ Pressures:
                         break
                     
                     if (T_high - T_low) < tolerance:
+                        # If we're close enough, use the midpoint
+                        try:
+                            h_final = props.enthalpy((T_low + T_high) / 2, P)
+                            if np.isfinite(h_final) and abs(h_final - h_target) < 5e3:  # 5 kJ/kg tolerance
+                                T_values.append((T_low + T_high) / 2)
+                                P_values.append(P / 1e5)
+                        except:
+                            pass
                         break
             
             if len(T_values) > 0:
                 ax.plot(P_values, T_values, '-', color=color, linewidth=2,
                        label=f'h = {h_target/1e3:.0f} kJ/kg')
+            # Clean up intermediate arrays
+            del T_values, P_values
+        
+        # Clean up loop variables
+        del T_range, P_range, h_levels, colors
+        gc.collect()
         
         ax.set_xlabel('Pressure (bar)')
         ax.set_ylabel('Temperature (K)')
         ax.set_title(f'{fluid_name} - Constant Enthalpy (T-P)')
-        ax.legend(loc='best', fontsize=8)
+        # Only show legend if there are labeled lines
+        handles, labels = ax.get_legend_handles_labels()
+        if len(handles) > 0:
+            ax.legend(loc='best', fontsize=8)
         ax.grid(True, alpha=0.3)
 
 
 def main():
     """Launch the GUI application."""
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except Exception as e:
+        print(f"Error creating Tk root window: {e}")
+        print("This may be due to running in a non-GUI environment.")
+        print("Try running from Terminal.app or use: pythonw -m hxopt.gui")
+        raise
+    
+    def on_closing():
+        """Handle window closing with proper cleanup."""
+        # Clean up matplotlib figures
+        import matplotlib.pyplot as plt
+        plt.close('all')
+        # Force garbage collection
+        gc.collect()
+        root.destroy()
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     app = TPMSOptimizerGUI(root)
     root.mainloop()
+    
+    # Final cleanup
+    gc.collect()
 
 
 if __name__ == "__main__":

@@ -11,9 +11,21 @@ The GUI provides an interactive interface for:
 
 ## Launching the GUI
 
+**On macOS (recommended):**
 ```bash
+# Option 1: Use the launcher script (opens in Terminal.app)
+./scripts/launch_gui.sh
+
+# Option 2: Run directly from Terminal.app (not Cursor's integrated terminal)
+cd /path/to/TPMS-HX
+source venv/bin/activate
 python scripts/run_gui.py
+
+# Option 3: Use pythonw (if available)
+pythonw scripts/run_gui.py
 ```
+
+**Note:** If running from Cursor's integrated terminal, the GUI may crash due to display access limitations. Use Terminal.app instead or the launcher script above.
 
 Or from Python:
 
@@ -31,6 +43,7 @@ main()
 - **RVE Table**: Path to RVE property table CSV file
   - Browse button to select file
   - Automatically updates when TPMS type changes
+  - **Fallback behavior**: If TPMS-specific RVE table is missing, automatically falls back to `primitive_default.csv` with a notification
 
 #### Geometry Parameters
 - **Length (m)**: Flow direction length
@@ -124,10 +137,15 @@ main()
 ### Export Capabilities
 - Export results to CSV (field data)
 - Export results to VTK (for ParaView visualization)
+- **Export STL**: Generate 3D TPMS mesh from optimized d(x) field
+  - Runs in background thread to prevent UI blocking
+  - Automatic memory management and resolution scaling
+  - Prevents memory exhaustion for large geometries
 
 ### Threading
 - Optimization runs in background thread
 - GUI remains responsive during optimization
+- STL export runs in background thread with memory limits
 
 ## Tips
 
@@ -142,11 +160,14 @@ main()
 ### GUI Won't Launch
 - Ensure matplotlib is installed: `pip install matplotlib`
 - Check Python version (requires 3.9+)
+- **macOS**: If running from Cursor's integrated terminal, use `./scripts/launch_gui.sh` or run from Terminal.app
+- **Display errors**: GUI requires proper display access; use Terminal.app on macOS
 
 ### Solve Fails
 - Check RVE table path is valid
 - Verify all parameters are within valid ranges
 - Check console for error messages
+- **Missing RVE tables**: GUI automatically falls back to Primitive properties if TPMS-specific table is missing
 
 ### Optimization Takes Too Long
 - Reduce max iterations

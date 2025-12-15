@@ -379,12 +379,13 @@ class RealFluidProperties:
     def _get_property_refprop(self, prop: str, T: float, P: float) -> float:
         """Get property from REFPROP."""
         # Property mapping for HyFlux_Hx interface
+        # Note: REFPROP expects property codes like 'H', not full names like 'ENTHALPY'
         hyflux_prop_map = {
             'D': 'DENSITY',  # Density
             'V': 'VIS',      # Viscosity
             'C': 'HEAT_CAPACITY_CP',  # Specific heat
             'L': 'THERMAL_CONDUCTIVITY',  # Thermal conductivity
-            'H': 'ENTHALPY',  # Enthalpy
+            'H': 'H',  # Enthalpy - use 'H' code, not 'ENTHALPY' string
         }
         
         # Standard REFPROP property codes
@@ -459,6 +460,9 @@ class RealFluidProperties:
             # Try HyFlux_Hx interface first (preferred)
             if self.is_hyflux_interface:
                 hyflux_prop = hyflux_prop_map.get(prop, prop_code)
+                # Ensure we use 'H' for enthalpy, not 'ENTHALPY' string
+                if hyflux_prop == 'ENTHALPY' or (prop == 'H' and hyflux_prop != 'H'):
+                    hyflux_prop = 'H'
                 try:
                     # HyFlux interface: get_property(fluid, prop_type, T, P, quality=None)
                     return self.rp.get_property(
@@ -467,8 +471,10 @@ class RealFluidProperties:
                 except Exception:
                     # Try with standard property code or alternative names
                     try:
+                        # Always use 'H' for enthalpy, never 'ENTHALPY'
+                        refprop_prop = prop_code if prop_code != 'ENTHALPY' else 'H'
                         return self.rp.get_property(
-                            self.fluid_refprop, prop_code, T, P
+                            self.fluid_refprop, refprop_prop, T, P
                         )
                     except Exception:
                         # Try with PropertyType enum values
@@ -482,7 +488,7 @@ class RealFluidProperties:
                         elif prop == 'L':
                             return self.rp.get_property(self.fluid_refprop, PropertyType.THERMAL_CONDUCTIVITY.value, T, P)
                         elif prop == 'H':
-                            # PropertyType.ENTHALPY.value is 'H', but REFPROP interface expects 'H' directly
+                            # Always use 'H' code for REFPROP, never 'ENTHALPY' string
                             return self.rp.get_property(self.fluid_refprop, 'H', T, P)
                         raise
             

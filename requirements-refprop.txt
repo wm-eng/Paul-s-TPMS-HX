@@ -1,0 +1,10 @@
+# REFPROP dependencies (optional)
+# Install with: pip install -r requirements-refprop.txt
+# Note: Requires REFPROP library installation
+
+# Include base requirements
+-r requirements.txt
+
+# REFPROP wrapper (requires REFPROP installation)
+REFPROP-dll>=10.0
+

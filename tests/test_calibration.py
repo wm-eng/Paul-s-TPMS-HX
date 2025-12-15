@@ -116,6 +116,71 @@ def test_load_experimental_data():
         assert all(p > 0 for p in exp_data.pressure_drops)
 
 
+def test_fig1a_calibration():
+    """
+    Test calibration/validation with Fig 1a digitized data.
+    
+    This test demonstrates:
+    1. Reading digitized flow vs pressure drop data from Fig 1a
+    2. Converting units (LPM -> m³/s, kPa -> Pa)
+    3. Fitting Darcy-Forchheimer model: ΔP/L = (μ/κ) u + β ρ u²
+    4. Validating that properties are physically reasonable
+    """
+    # Paths to data files
+    downloads_path = os.path.expanduser('~/Downloads')
+    digitized_csv = os.path.join(
+        downloads_path, 'digitized_fig1a_flow_vs_dp.csv'
+    )
+    
+    # Fallback to relative path if not in Downloads
+    if not os.path.exists(digitized_csv):
+        digitized_csv = os.path.join(
+            os.path.dirname(__file__), '..', 'digitized_fig1a_flow_vs_dp.csv'
+        )
+    
+    # Skip if file doesn't exist
+    if not os.path.exists(digitized_csv):
+        pytest.skip(f"Digitized data file not found: {digitized_csv}")
+    
+    # Read digitized flow vs pressure drop data
+    df = pd.read_csv(digitized_csv)
+    
+    # Fluid properties (helium at room temperature)
+    rho = 0.1786  # kg/m³
+    mu = 2.0e-5   # Pa·s
+    
+    # Reference area and length for unit conversion
+    A_ref = 1e-4  # m² (reference cross-sectional area)
+    L_ref = 0.1   # m (reference length)
+    
+    # Test calibration for each series in the data
+    for series_name in df['series'].unique():
+        subset = df[df['series'] == series_name]
+        
+        if len(subset) < 2:
+            continue  # Need at least 2 points for fitting
+        
+        # Convert units
+        u = subset['flow_rate_LPM'].values / 60.0  # m³/s per unit area proxy
+        dp = subset['pressure_drop_kPa'].values * 1e3  # Pa
+        
+        # Fit Darcy-Forchheimer model
+        lengths = np.full(len(u), L_ref)
+        
+        try:
+            kappa_fit, beta_fit = fit_darcy_forchheimer(
+                u, dp, lengths, rho, mu
+            )
+        except Exception as e:
+            pytest.fail(f"Failed to fit Darcy-Forchheimer for {series_name}: {e}")
+        
+        # Verify fitted values are physically reasonable
+        assert kappa_fit > 0, f"kappa must be positive for {series_name}"
+        assert beta_fit > 0, f"beta must be positive for {series_name}"
+        assert kappa_fit < 1e-6, f"kappa seems too large for {series_name}: {kappa_fit:.2e}"
+        assert beta_fit < 1e8, f"beta seems too large for {series_name}: {beta_fit:.2e}"
+
+
 def test_fig1c_1d_1e_calibration():
     """
     Test calibration/validation with Fig 1c, 1d, 1e digitized data.

@@ -99,6 +99,13 @@ This document summarizes the fixes implemented to address the zero-gradient opti
 3. Recalibrate RVE properties for actual test geometry/flow conditions
 4. Use properties from Cheung et al. (2025) if available
 
+**Implementation**: See `scripts/apply_rve_fixes.py` for a script that applies all these recommendations.
+
+**Code Changes**:
+- Default mass flow rates reduced in test scripts where appropriate
+- GUI allows easy adjustment of mass flow rates and geometry
+- RVE property fallback mechanism ensures GUI continues working even if TPMS-specific tables are missing
+
 ## Verification Results
 
 ### RVE Property Verification (`scripts/verify_rve_properties.py`)
@@ -135,6 +142,12 @@ This document summarizes the fixes implemented to address the zero-gradient opti
   - Scientific Reports volume 15, Article number: 1688 (2025)
   - DOI: https://doi.org/10.1038/s41598-025-85935-x
   - Local copy: `docs/s41598-025-85935-x.pdf`
+  - **✅ Tested with calibrated experimental data**:
+    - Fig 1a: Different channel configurations (1, 5, 10, 18 channels)
+    - Fig 1c, 1d, 1e: Different d values
+    - RVE table created: `data/rve_tables/cheung_2025_calibrated.csv`
+    - Verification: Q varies with d when using property-limited conditions
 
 - Yanagihara et al. (2025) - "Flow-priority optimization of additively manufactured variable-TPMS lattice heat exchanger"
   - arXiv:2512.10207
+

@@ -290,12 +290,21 @@ class REFPROPInterface:
                 return self._get_refprop_property(fluid, prop_type, T, P, quality, **kwargs)
             except (RuntimeError, ValueError) as e:
                 # RuntimeError for data file issues, ValueError for other errors
-                # Only log if it's not a known recoverable error
-                if "data file error" not in str(e).lower():
+                error_str = str(e).lower()
+                # Suppress warnings for error 4 (pressure above melting) - it's handled gracefully
+                # and will fall back to CoolProp or basic correlations
+                if "error 4" in error_str or "pressure above melting" in error_str:
+                    # Silently fall back - don't log warning
+                    pass
+                elif "data file error" not in error_str:
+                    # Only log if it's not a known recoverable error
                     logger.warning(f"REFPROP failed for {fluid} {prop_type}: {e}")
             except Exception as e:
                 # Other unexpected errors
-                logger.warning(f"REFPROP failed for {fluid} {prop_type}: {e}")
+                error_str = str(e).lower()
+                # Suppress warnings for pressure above melting errors
+                if "error 4" not in error_str and "pressure above melting" not in error_str:
+                    logger.warning(f"REFPROP failed for {fluid} {prop_type}: {e}")
         
         # Try CoolProp as fallback
         if self.coolprop_available:
@@ -345,6 +354,8 @@ class REFPROPInterface:
                 'L': 'TCX',  # Thermal conductivity
                 'TCX': 'TCX',
                 'THERMAL_CONDUCTIVITY': 'TCX',
+                'H': 'H',  # Enthalpy
+                'ENTHALPY': 'H',  # Map 'ENTHALPY' string to 'H' code
             }
             
             refprop_prop = prop_map.get(prop_type, prop_type)
@@ -355,17 +366,28 @@ class REFPROPInterface:
             # z is composition array (pure fluid = [1.0])
             z = [1.0]  # Pure fluid
             
-            result = rp.REFPROPdll(fluid, "TP", refprop_prop, 0, 0, 0, T, P / 1000.0, z)
+            # Convert P from Pa to kPa for REFPROP
+            P_kpa = P / 1000.0
+            
+            result = rp.REFPROPdll(fluid, "TP", refprop_prop, 0, 0, 0, T, P_kpa, z)
                 
             # Check for errors
             if hasattr(result, 'ierr') and result.ierr != 0:
+                error_msg = getattr(result, 'herr', 'Unknown error')
+                
+                # Error 4: Pressure above melting pressure - fall back gracefully
+                # Don't try to get saturation pressure as TQ calls can cause crashes
+                # Just raise to trigger fallback to CoolProp or basic correlations
+                if result.ierr == 4:
+                    raise RuntimeError(f"REFPROP error 4 (pressure above melting): {error_msg}")
+                
                 # Error 102 and -29 are data file issues - should fall back gracefully
                 # Error 119 is convergence failure - also should fall back
                 if result.ierr in [102, -29, 119]:
                     # These are recoverable - raise to trigger fallback
-                    raise RuntimeError(f"REFPROP data file error {result.ierr}: {getattr(result, 'herr', 'Unknown error')}")
+                    raise RuntimeError(f"REFPROP data file error {result.ierr}: {error_msg}")
                 else:
-                    raise ValueError(f"REFPROP error {result.ierr}: {getattr(result, 'herr', 'Unknown error')}")
+                    raise ValueError(f"REFPROP error {result.ierr}: {error_msg}")
                 
             # Extract output value
             if hasattr(result, 'Output'):

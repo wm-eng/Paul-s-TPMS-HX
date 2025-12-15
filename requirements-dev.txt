@@ -1,0 +1,12 @@
+# Development dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Include base requirements
+-r requirements.txt
+
+# Development tools
+pytest>=7.0.0
+pytest-cov>=3.0.0
+black>=22.0.0
+mypy>=0.950
+

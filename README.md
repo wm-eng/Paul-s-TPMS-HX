@@ -7,6 +7,7 @@ Optimization loop for a He/LH₂ TPMS (Triply Periodic Minimal Surface) heat exc
 
 ## Installation
 
+### Option 1: Install as package (recommended)
 Create a virtual environment (recommended):
 ```bash
 python3 -m venv venv
@@ -18,6 +19,15 @@ Or install directly (may require `--break-system-packages` on some systems):
 ```bash
 python3 -m pip install -e .
 ```
+
+### Option 2: Install from requirements.txt
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+**Note**: For development dependencies, use `requirements-dev.txt`. For REFPROP support, use `requirements-refprop.txt` (requires REFPROP library installation).
 
 ## Quick Start
 
@@ -45,16 +55,59 @@ python examples/run_v1_real_properties.py
 
 Launch the graphical user interface:
 
+**On macOS (recommended):**
 ```bash
+# Option 1: Use the launcher script (opens in Terminal.app)
+./scripts/launch_gui.sh
+
+# Option 2: Run directly from Terminal.app (not Cursor's integrated terminal)
+cd /Users/paulperera/Coding/TPMS-HX
+source venv/bin/activate
 python scripts/run_gui.py
+
+# Option 3: Use pythonw (if available)
+pythonw scripts/run_gui.py
 ```
 
+**Note:** If running from Cursor's integrated terminal, the GUI may crash due to display access limitations. Use Terminal.app instead or the launcher script above.
+
+**GUI Features:**
+- Memory-optimized STL export (runs in background thread with automatic resolution scaling)
+- Graceful handling of missing RVE tables (falls back to Primitive properties)
+- Real-fluid property support (REFPROP/COOLProp) with automatic fallback
+- Comprehensive visualization tabs (TPMS structure, 2D model, temperature profiles, design variables, results, fluid properties)
+
+### TPMS Lattice Visualizer (Streamlit)
+
+Visualize and export TPMS lattice structures interactively:
+
+```bash
+streamlit run ui/streamlit_app.py
+```
+
+The Streamlit app provides:
+- **3D visualization** of TPMS structures (Gyroid, Primitive, Diamond, IWP, Lidinoid, Neovius, Octo, Split-P)
+- **Interactive controls** for threshold (t), domain size, repeats, and grid resolution
+- **Variant modes**: single (f ≤ t) and double (|f| ≤ t)
+- **Property computation**: porosity, surface area, volume, and A_surf/V
+- **Export options**: STL and OBJ file formats
+
+**Note**: The Streamlit app requires additional dependencies:
+- `streamlit` - Web UI framework
+- `plotly` - 3D visualization
+- `scikit-image` - Marching cubes mesh generation
+- `numpy-stl` - STL export
+
+These are included in the project dependencies and will be installed with `pip install -e .`.
+
 The GUI provides:
-- TPMS structure selection (Primitive, Gyroid, Diamond, etc.)
+- TPMS structure selection (Primitive, Gyroid, Diamond, IWP, Neovius)
 - 2D flow path visualization
 - Interactive parameter configuration
 - Real-time optimization results
 - Temperature and design variable plots
+- STL export with memory-safe background processing
+- Automatic fallback to Primitive RVE properties for missing TPMS types
 
 This will:
 1. Load RVE property tables from `data/rve_tables/`

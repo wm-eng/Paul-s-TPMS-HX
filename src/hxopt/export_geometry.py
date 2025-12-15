@@ -6,6 +6,18 @@ import csv
 from .macro_model import MacroModelResult
 from .config import Config
 
+# Optional imports for STL generation
+try:
+    from .tpms_stl_generator import (
+        generate_and_export_stl,
+        generate_tpms_mesh_from_d_field,
+        export_tpms_stl
+    )
+    from .tpms_library import TPMSType, VariantMode
+    STL_EXPORT_AVAILABLE = True
+except ImportError:
+    STL_EXPORT_AVAILABLE = False
+
 
 def export_field_csv(
     result: MacroModelResult,
@@ -123,4 +135,67 @@ def export_vtk(
                 f.write(f"{val}\n")
     
     print(f"Exported VTK data to {path}")
+
+
+def export_tpms_stl_from_optimization(
+    result: MacroModelResult,
+    d_field: np.ndarray,
+    config: Config,
+    filename: str = "optimized_tpms.stl",
+    tpms_type=None,  # Will use TPMSType.PRIMITIVE if available
+    variant=None,  # Will use VariantMode.SINGLE if available
+    cell_size: float = 0.001,
+    resolution: int = 50,
+) -> str:
+    """
+    Export optimized TPMS geometry to STL file.
+    
+    This function takes the optimized d(x) field from the optimizer
+    and generates a 3D TPMS lattice mesh, then exports it to STL.
+    
+    Parameters:
+    -----------
+    result : MacroModelResult
+        Solution from macromodel
+    d_field : np.ndarray
+        Optimized channel-bias field
+    config : Config
+        Configuration object
+    filename : str
+        Output STL filename
+    tpms_type : TPMSType, optional
+        TPMS lattice type (default: Primitive)
+    variant : VariantMode, optional
+        Single or double mode (default: single)
+    cell_size : float
+        Unit cell size in meters (default: 1mm)
+    resolution : int
+        Grid resolution per unit cell (default: 50)
+        
+    Returns:
+    --------
+    str : Path to exported STL file
+    """
+    if not STL_EXPORT_AVAILABLE:
+        raise ImportError(
+            "STL export requires numpy-stl and scikit-image. "
+            "Install with: pip install numpy-stl scikit-image"
+        )
+    
+    if tpms_type is None:
+        tpms_type = TPMSType.PRIMITIVE
+    if variant is None:
+        variant = VariantMode.SINGLE
+    
+    return generate_and_export_stl(
+        d_field=d_field,
+        result=result,
+        config=config,
+        filename=filename,
+        tpms_type=tpms_type,
+        variant=variant,
+        cell_size=cell_size,
+        resolution=resolution,
+        n_repeats=(1, 1, 1)  # Can be made configurable
+    )
 

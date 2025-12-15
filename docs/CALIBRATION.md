@@ -150,6 +150,20 @@ After calibration, validate the RVE properties by:
   - DOI: [https://doi.org/10.1038/s41598-025-85935-x](https://doi.org/10.1038/s41598-025-85935-x)
   - Local copy: `docs/s41598-025-85935-x.pdf`
   - Provides experimental measurements of pressure drop, thermal conductivity, and mechanical properties for TPMS Primitive lattices. Includes detailed pressure drop correlations, thermal conductivity measurements for composite structures, and validation data useful for RVE property calibration.
+  - **✅ Tested with calibrated data**:
+    - Fig 1a: Pressure drop vs flow rate for different channel configurations (1, 5, 10, 18 channels)
+      - Data: `~/Downloads/digitized_fig1a_flow_vs_dp.csv`
+      - Test script: `scripts/test_fig1a_calibration.py`
+      - Test: `tests/test_calibration.py::test_fig1a_calibration`
+    - Fig 1c, 1d, 1e: Pressure drop vs flow rate for different d values
+      - Data: `~/Downloads/digitized_fig1c_1d_1e_flow_vs_dp.csv`
+      - Calibrated RVE: `~/Downloads/fig1c_1d_1e_calibrated_rve_proxy.csv`
+      - Test script: `scripts/test_fig1c_1d_1e_calibration.py`
+      - Test: `tests/test_calibration.py::test_fig1c_1d_1e_calibration`
+    - **RVE table created**: `data/rve_tables/cheung_2025_calibrated.csv`
+      - Created from Fig 1c, 1d, 1e calibrated data
+      - Tested with solver: `scripts/create_cheung_rve_table.py`
+      - **Result**: Q varies by 7.41% with d when using property-limited conditions
 - **Energies 18(1), 134 (2025)** - TPMS lattice and porous media research paper. 
   - Full text: [https://www.mdpi.com/1996-1073/18/1/134](https://www.mdpi.com/1996-1073/18/1/134)
   - Local copy: `docs/energies-18-00134.pdf`

@@ -277,10 +277,19 @@ class MacroModel:
             # Compute densities and properties at current temperatures
             # Ensure valid inputs (no NaN, no negative pressure) before property lookup
             # Use fluid-specific limits
+            # IMPORTANT: Use all points including boundaries for property evaluation
+            # We'll evaluate properties at segment midpoints (for Q_vol calculation)
+            # but also need properties at boundaries for proper enthalpy calculation
             T_hot_safe = np.clip(T_hot[:-1], self.hot_T_min, self.hot_T_max)
             T_cold_safe = np.clip(T_cold[:-1], self.cold_T_min, self.cold_T_max)
             P_hot_safe = np.clip(P_hot[:-1], self.hot_P_min, self.hot_P_max)
             P_cold_safe = np.clip(P_cold[:-1], self.cold_P_min, self.cold_P_max)
+            
+            # Ensure boundary temperatures are also valid (for property lookups at boundaries)
+            T_hot[0] = np.clip(T_hot[0], self.hot_T_min, self.hot_T_max)
+            T_hot[-1] = np.clip(T_hot[-1], self.hot_T_min, self.hot_T_max)
+            T_cold[0] = np.clip(T_cold[0], self.cold_T_min, self.cold_T_max)
+            T_cold[-1] = np.clip(T_cold[-1], self.cold_T_min, self.cold_T_max)
             
             # Replace NaN/inf with safe values (use inlet conditions as defaults)
             T_hot_safe = np.nan_to_num(
@@ -366,6 +375,17 @@ class MacroModel:
             # Update enthalpies with under-relaxation
             relax_h = self.config.solver.relax * 0.5  # More conservative for enthalpy
             
+            # CRITICAL FIX: Reset hot inlet boundary condition each iteration
+            # Hot side: inlet at x=0 (index 0)
+            T_hot[0] = self.config.fluid.T_hot_in
+            # Compute inlet enthalpy using inlet properties for consistency
+            cp_hot_inlet = self.props_hot.specific_heat(
+                self.config.fluid.T_hot_in, 
+                self.config.fluid.P_hot_in
+            )
+            cp_hot_inlet = np.clip(cp_hot_inlet, 100.0, 1e6)
+            h_hot[0] = cp_hot_inlet * self.config.fluid.T_hot_in
+            
             # Hot side: forward difference (flows +x)
             for i in range(1, self.n + 1):
                 # Hot side: forward difference
@@ -376,7 +396,10 @@ class MacroModel:
                 h_hot[i] = float((1 - relax_h) * h_hot[i] + relax_h * h_hot_new)
                 
                 # Convert enthalpy to temperature using current cp
-                cp_use = cp_hot[i-1] if i <= self.n else cp_hot[-1]
+                # Use property at the segment midpoint (i-1) for segment i
+                cp_use = cp_hot[i-1] if i <= len(cp_hot) else cp_hot[-1]
+                if cp_use <= 0 or not np.isfinite(cp_use):
+                    cp_use = cp_hot_inlet  # Fallback to inlet cp
                 T_hot_new = h_hot[i] / cp_use
                 
                 # Clamp temperature to fluid-specific limits
@@ -390,9 +413,15 @@ class MacroModel:
                 h_hot[i] = cp_use * T_hot[i]
             
             # Cold side: backward difference (flows -x, inlet at x=L)
-            # Reset inlet condition each iteration
-            h_cold[-1] = cp_ref_cold * self.config.fluid.T_cold_in
+            # CRITICAL FIX: Reset inlet condition each iteration with proper property evaluation
             T_cold[-1] = self.config.fluid.T_cold_in
+            # Compute inlet enthalpy using inlet properties for consistency
+            cp_cold_inlet = self.props_cold.specific_heat(
+                self.config.fluid.T_cold_in,
+                self.config.fluid.P_cold_in
+            )
+            cp_cold_inlet = np.clip(cp_cold_inlet, 100.0, 1e6)
+            h_cold[-1] = cp_cold_inlet * self.config.fluid.T_cold_in
             
             # Cold side flows in -x direction (from x=L to x=0)
             # Energy balance: m_dot * dh/dx = Q_vol * A_cross
@@ -410,7 +439,11 @@ class MacroModel:
                 h_cold[j] = float((1 - relax_h) * h_cold[j] + relax_h * h_cold_new)
                 
                 # Convert enthalpy to temperature
-                T_cold_new = h_cold[j] / cp_cold[j]
+                # Use property at segment j (which corresponds to segment midpoint)
+                cp_use_cold = cp_cold[j] if j < len(cp_cold) else cp_cold[-1]
+                if cp_use_cold <= 0 or not np.isfinite(cp_use_cold):
+                    cp_use_cold = cp_cold_inlet  # Fallback to inlet cp
+                T_cold_new = h_cold[j] / cp_use_cold
                 
                 # Clamp temperature to fluid-specific limits
                 T_cold_new = float(np.clip(T_cold_new, self.cold_T_min, self.cold_T_max))
@@ -419,8 +452,8 @@ class MacroModel:
                 T_cold[j] = float((1 - self.config.solver.relax) * T_cold[j] + \
                            self.config.solver.relax * T_cold_new)
                 
-                # Update enthalpy to be consistent
-                h_cold[j] = float(cp_cold[j] * T_cold[j])
+                # Update enthalpy to be consistent with clamped temperature
+                h_cold[j] = float(cp_use_cold * T_cold[j])
             
             # Solid energy balance with improved stability
             # Heat balance: h_htc_hot * (T_solid - T_hot) = h_htc_cold * (T_cold - T_solid)
@@ -437,7 +470,15 @@ class MacroModel:
             T_solid_new_float = T_solid_new.astype(float) if hasattr(T_solid_new, 'astype') else np.array(T_solid_new, dtype=float)
             T_solid[:-1] = (1 - self.config.solver.relax) * T_solid[:-1] + \
                           self.config.solver.relax * T_solid_new_float
-            T_solid[-1] = float(T_solid[-2])  # Extrapolate
+            
+            # IMPROVED: Better boundary extrapolation for solid temperature
+            # Use weighted average of last interior point and boundary fluid temperatures
+            if len(T_solid) > 1:
+                # At outlet (x=L): average of last interior point and outlet fluid temperatures
+                T_solid_outlet = 0.5 * T_solid[-2] + 0.25 * T_hot[-1] + 0.25 * T_cold[0]
+                T_solid[-1] = float(np.clip(T_solid_outlet, T_solid_min, T_solid_max))
+            else:
+                T_solid[-1] = float(T_solid[0]) if len(T_solid) > 0 else float((T_hot[0] + T_cold[0]) / 2.0)
             
             # Pressure drop: Darcy-Forchheimer
             # dP/dx = -(mu/kappa) * u - beta * rho * u * |u|
@@ -482,6 +523,37 @@ class MacroModel:
                 # Clamp pressure to valid range
                 P_cold[j] = float(np.clip(P_cold[j], self.cold_P_min, self.cold_P_max))
             
+            # Check for unphysical values (NaN, Inf, or extremely large)
+            if (not np.all(np.isfinite(T_hot)) or 
+                not np.all(np.isfinite(T_cold)) or 
+                not np.all(np.isfinite(T_solid)) or
+                np.any(np.abs(T_hot) > 1e6) or 
+                np.any(np.abs(T_cold) > 1e6) or
+                np.any(np.abs(T_solid) > 1e6)):
+                # Reset to safe values and warn
+                import warnings
+                warnings.warn(
+                    f"Solver iteration {it}: Unphysical temperatures detected. "
+                    f"Resetting to inlet conditions.",
+                    RuntimeWarning
+                )
+                # Reset to inlet conditions
+                T_hot = np.linspace(
+                    self.config.fluid.T_hot_in,
+                    max(self.config.fluid.T_hot_in - 10.0, self.hot_T_min),
+                    self.n + 1
+                )
+                T_cold = np.linspace(
+                    min(self.config.fluid.T_cold_in + 10.0, self.cold_T_max),
+                    self.config.fluid.T_cold_in,
+                    self.n + 1
+                )
+                T_solid = (T_hot + T_cold) / 2.0
+                # Re-initialize enthalpies
+                h_hot = cp_ref_hot * T_hot
+                h_cold = cp_ref_cold * T_cold
+                continue  # Skip convergence check and try again
+            
             # Check convergence
             err = max(
                 np.max(np.abs(T_hot - T_hot_old)),
@@ -507,6 +579,16 @@ class MacroModel:
         # Ensure pressure drops are positive (pressure always decreases in flow direction)
         delta_P_hot = max(0.0, delta_P_hot)
         delta_P_cold = max(0.0, delta_P_cold)
+        
+        # Final validation: check for unphysical results
+        if (not np.isfinite(Q) or abs(Q) > 1e15 or
+            not np.all(np.isfinite(T_hot)) or not np.all(np.isfinite(T_cold)) or
+            not np.all(np.isfinite(P_hot)) or not np.all(np.isfinite(P_cold))):
+            import warnings
+            warnings.warn(
+                "Solver produced unphysical results. Results may be invalid.",
+                RuntimeWarning
+            )
         
         return MacroModelResult(
             Q=Q,

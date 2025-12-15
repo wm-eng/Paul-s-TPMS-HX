@@ -199,3 +199,4 @@ SOLUTION:
 
 if __name__ == "__main__":
     compare_property_effects()
+
